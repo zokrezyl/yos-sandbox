@@ -1,0 +1,43 @@
+#!/bin/bash
+# Filter out flags wasm-ld doesn't support and detect link mode
+ARGS=()
+IS_COMPILE=0
+IS_RELOCATABLE=0
+for arg in "$@"; do
+    case "$arg" in
+        -c) IS_COMPILE=1; ARGS+=("$arg") ;;
+        -r) IS_RELOCATABLE=1; ARGS+=("$arg") ;;
+        -Wl,--start-group|-Wl,--end-group) ;;
+        -Wl,--sort-common|-Wl,--sort-section*) ;;
+        -Wl,--gc-sections|-Wl,--warn-common) ;;
+        *) ARGS+=("$arg") ;;
+    esac
+done
+
+# Add yos-stubs.o only for final linking (not compile-only or relocatable)
+YOS_STUBS=""
+if [ "$IS_COMPILE" = "0" ] && [ "$IS_RELOCATABLE" = "0" ]; then
+    YOS_STUBS="@BB_BUILD@/yos-stubs.o"
+fi
+
+exec @WASI_CC_ABS@ --target=wasm32-wasip1 --sysroot=@WASI_SYSROOT_ABS@ \
+    -D_WASI_EMULATED_SIGNAL \
+    -D_WASI_EMULATED_PROCESS_CLOCKS \
+    -I@YOS_SRC_ABS@/wasm-stubs \
+    -include @YOS_SRC_ABS@/wasm-stubs/wasm-compat.h \
+    -Wno-int-conversion \
+    -Wno-incompatible-pointer-types \
+    -Wno-implicit-function-declaration \
+    -Wno-deprecated-non-prototype \
+    -Wno-shift-op-parentheses \
+    -Wno-string-plus-int \
+    -Wno-gnu-designator \
+    -Wno-bitwise-op-parentheses \
+    -Wno-dangling-else \
+    -Wno-unused-but-set-variable \
+    -DOFF_T_MAX=9223372036854775807LL \
+    -Wno-unknown-warning-option \
+    -Wl,--no-gc-sections \
+    "${ARGS[@]}" \
+    $YOS_STUBS \
+    -lwasi-emulated-process-clocks
