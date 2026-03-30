@@ -14,7 +14,7 @@
   (data (i32.const 310) "parent: forked child pid=")                           ;; 25
   (data (i32.const 340) "parent: child exited with code=")                     ;; 31
   (data (i32.const 380) "child: about to exec hello.wasm\n")                   ;; 32
-  (data (i32.const 420) "hello.wasm")                                          ;; 10
+  (data (i32.const 420) "hello.wasm\00")                                        ;; 11 (null-terminated)
   (data (i32.const 440) "child: exec failed!\n")                               ;; 20
   (data (i32.const 470) "parent: done\n")                                      ;; 13
 
@@ -75,7 +75,7 @@
       (then
         ;; === CHILD: exec hello.wasm ===
         (drop (call $yos_write (i32.const 1) (i32.const 380) (i32.const 32)))
-        (drop (call $yos_exec (i32.const 420) (i32.const 10)))
+        (drop (call $yos_exec (i32.const 420) (i32.const 0)))  ;; path, argv=NULL
         ;; If exec returns, it failed
         (drop (call $yos_write (i32.const 1) (i32.const 440) (i32.const 20)))
         (call $yos_exit (i32.const 1))

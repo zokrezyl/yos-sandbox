@@ -9,6 +9,8 @@ std::shared_ptr<Process> ProcessTable::createInit() {
     auto proc = std::make_shared<Process>();
     proc->pid = _nextPid++;
     proc->parentPid = 0;
+    proc->pgid = proc->pid;  // init is its own process group leader
+    proc->sid = proc->pid;   // init is its own session leader
     proc->state = ProcessState::Running;
     _processes[proc->pid] = proc;
     return proc;
@@ -24,6 +26,8 @@ std::shared_ptr<Process> ProcessTable::fork(Pid parentPid) {
     auto child = std::make_shared<Process>();
     child->pid = _nextPid++;
     child->parentPid = parentPid;
+    child->pgid = parent->pgid;  // inherit process group
+    child->sid = parent->sid;    // inherit session
     child->state = ProcessState::Ready;
 
     // Eager copy of parent's memory

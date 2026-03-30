@@ -23,6 +23,8 @@ enum class ProcessState {
 struct Process {
     Pid pid = -1;
     Pid parentPid = -1;
+    Pid pgid = -1;   // process group ID
+    Pid sid = -1;    // session ID
     ProcessState state = ProcessState::Ready;
     int32_t exitCode = 0;
 
@@ -39,6 +41,11 @@ struct Process {
     std::mutex mutex;
     std::condition_variable cv;
     bool exited = false;
+
+    // vfork: parent blocks until child exec/exit
+    Pid vforkParentPid = -1;  // if >0, this is a vfork child; signal parent on exec/exit
+    std::condition_variable vforkCv;
+    bool vforkChildDone = false;
 };
 
 class ProcessTable {
