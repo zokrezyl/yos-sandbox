@@ -20,7 +20,11 @@ if(wasm3_ADDED)
     file(GLOB WASM3_SOURCES "${wasm3_SOURCE_DIR}/source/*.c")
     add_library(wasm3 STATIC ${WASM3_SOURCES})
     target_include_directories(wasm3 PUBLIC "${wasm3_SOURCE_DIR}/source")
-    target_compile_definitions(wasm3 PUBLIC d_m3HasWASI)
+    target_compile_definitions(wasm3 PUBLIC
+        d_m3HasWASI
+        d_m3MaxFunctionStackHeight=4000
+        d_m3MaxConstantTableSize=256
+    )
 endif()
 
 # wasi-sdk toolchain for compiling C to wasm32
@@ -44,14 +48,38 @@ CPMAddPackage(
     DOWNLOAD_ONLY YES
 )
 
+# Generate syscall glue code
+set(CODEGEN_DIR "${CMAKE_BINARY_DIR}/generated")
+set(SYSCALLS_YAML "${CMAKE_SOURCE_DIR}/src/codegen/syscalls.yaml")
+set(CODEGEN_SCRIPT "${CMAKE_SOURCE_DIR}/src/codegen/gen-syscalls.py")
+set(GENERATED_HANDLERS "${CODEGEN_DIR}/src/yos-handlers-generated.cpp")
+set(GENERATED_LINK "${CODEGEN_DIR}/src/yos-link-generated.cpp")
+set(GENERATED_WASM_H "${CODEGEN_DIR}/wasm-stubs/yos-generated.h")
+set(GENERATED_WASM_C "${CODEGEN_DIR}/wasm-stubs/yos-generated.c")
+
+find_program(UV_TOOL uv REQUIRED)
+
+add_custom_command(
+    OUTPUT ${GENERATED_HANDLERS} ${GENERATED_LINK} ${GENERATED_WASM_H} ${GENERATED_WASM_C}
+    COMMAND ${UV_TOOL} run --with pyyaml python3 ${CODEGEN_SCRIPT} ${SYSCALLS_YAML} ${CODEGEN_DIR}
+    DEPENDS ${SYSCALLS_YAML} ${CODEGEN_SCRIPT}
+    COMMENT "Generating syscall glue code"
+)
+
+add_custom_target(generate_syscalls DEPENDS ${GENERATED_HANDLERS} ${GENERATED_LINK})
+
 # YOS runtime (host)
 add_executable(yos
     src/main.cpp
     src/process.cpp
+    src/procfs.cpp
     src/runtime.cpp
     src/syscalls.cpp
+    src/vfs.cpp
+    src/hostfs.cpp
 )
-target_include_directories(yos PRIVATE src)
+add_dependencies(yos generate_syscalls)
+target_include_directories(yos PRIVATE src ${wasm3_SOURCE_DIR}/source ${CODEGEN_DIR}/src)
 target_link_libraries(yos PRIVATE wasm3 pthread)
 
 # Test WASM modules: compile .wat -> .wasm via wat2wasm
@@ -74,16 +102,15 @@ endforeach()
 add_custom_target(wasm_tests ALL DEPENDS ${WASM_OUTPUTS})
 
 # Busybox WASM build
-# We compile a minimal busybox (just sh + basic applets) to wasm32-wasi
-# with our yos_* syscall stubs for fork/exec
+# Compile busybox to wasm32 with -nostdlib using only our generated YOS stubs
 add_custom_command(
     OUTPUT "${CMAKE_BINARY_DIR}/wasm/shell.wasm"
     COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/wasm"
     COMMAND ${CMAKE_COMMAND}
         -DWASI_CC=${WASI_CC}
-        -DWASI_SYSROOT=${WASI_SYSROOT}
         -DBUSYBOX_SOURCE_DIR=${busybox_SOURCE_DIR}
         -DYOS_SOURCE_DIR=${CMAKE_SOURCE_DIR}
+        -DCODEGEN_DIR=${CODEGEN_DIR}
         -DOUTPUT_DIR=${CMAKE_BINARY_DIR}/wasm
         -P ${CMAKE_SOURCE_DIR}/cmake/build-busybox.cmake
     DEPENDS
@@ -91,8 +118,9 @@ add_custom_command(
         ${CMAKE_SOURCE_DIR}/wasm-stubs/yos-stubs.c
         ${CMAKE_SOURCE_DIR}/wasm-stubs/yos-stubs.h
         ${CMAKE_SOURCE_DIR}/wasm-stubs/wasm-compat.h
-        ${CMAKE_SOURCE_DIR}/wasm-programs/shell.c
-        ${CMAKE_SOURCE_DIR}/busybox.config
+        ${CODEGEN_DIR}/wasm-stubs/yos-generated.c
+        ${CODEGEN_DIR}/wasm-stubs/yos-generated.h
+        generate_syscalls
     COMMENT "Building wasm programs"
 )
 

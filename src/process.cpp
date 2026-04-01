@@ -80,4 +80,19 @@ Pid ProcessTable::nextPid() {
     return _nextPid;
 }
 
+std::vector<ProcessTable::ProcInfo> ProcessTable::listProcesses() {
+    std::lock_guard lock(_mutex);
+    std::vector<ProcInfo> result;
+    result.reserve(_processes.size());
+    for (const auto& [pid, proc] : _processes) {
+        result.push_back({
+            proc->pid,
+            proc->parentPid,
+            proc->pgid,
+            proc->state
+        });
+    }
+    return result;
+}
+
 } // namespace yos

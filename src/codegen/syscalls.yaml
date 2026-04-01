@@ -1,0 +1,1174 @@
+# YOS Syscall Definition Table
+#
+# Types:
+#   i32, i64, u32, u64  - integers
+#   str                  - null-terminated string (const char*)
+#   ptr                  - raw pointer (void*)
+#   out:TYPE            - output pointer
+#
+# Handlers:
+#   passthrough  - direct native call
+#   vfs          - goes through ctx->vfs->method()
+#   runtime      - goes through ctx->runtime->method()
+#   stub         - returns fixed value (for things we don't support)
+#   wasm_impl    - wasm-side implementation (body field has C code)
+
+namespace: yos
+
+# =============================================================================
+# File Operations - go through VFS
+# =============================================================================
+file_ops:
+  - name: open
+    params: [{path: str}, {flags: i32}, {mode: i32}]
+    returns: i32
+    handler: vfs
+    method: open(path, flags, mode)
+
+  - name: close
+    params: [{fd: i32}]
+    returns: i32
+    handler: vfs
+    method: close(fd)
+
+  - name: read
+    params: [{fd: i32}, {buf: ptr}, {count: u32}]
+    returns: i32
+    handler: vfs
+    method: read(fd, buf, count)
+
+  - name: write
+    params: [{fd: i32}, {buf: ptr}, {count: u32}]
+    returns: i32
+    handler: vfs
+    method: write(fd, buf, count)
+
+  - name: lseek
+    params: [{fd: i32}, {offset: i64}, {whence: i32}]
+    returns: i64
+    handler: vfs
+    method: lseek(fd, offset, whence)
+
+  - name: dup
+    params: [{oldfd: i32}]
+    returns: i32
+    handler: vfs
+    method: dup(oldfd)
+
+  - name: dup2
+    params: [{oldfd: i32}, {newfd: i32}]
+    returns: i32
+    handler: vfs
+    method: dup2(oldfd, newfd)
+
+  - name: fcntl
+    params: [{fd: i32}, {cmd: i32}, {arg: i64}]
+    returns: i32
+    handler: vfs
+    method: fcntl(fd, cmd, arg)
+
+  - name: ftruncate
+    params: [{fd: i32}, {length: i64}]
+    returns: i32
+    handler: vfs
+    method: ftruncate(fd, length)
+
+  - name: fsync
+    params: [{fd: i32}]
+    returns: i32
+    handler: vfs
+    method: fsync(fd)
+
+# =============================================================================
+# File Status - go through VFS
+# =============================================================================
+file_stat:
+  - name: stat
+    params: [{path: str}, {buf: ptr}]
+    returns: i32
+    handler: vfs
+    method: stat(path, (struct stat*)buf)
+
+  - name: lstat
+    params: [{path: str}, {buf: ptr}]
+    returns: i32
+    handler: vfs
+    method: lstat(path, (struct stat*)buf)
+
+  - name: fstat
+    params: [{fd: i32}, {buf: ptr}]
+    returns: i32
+    handler: vfs
+    method: fstat(fd, (struct stat*)buf)
+
+  - name: access
+    params: [{path: str}, {mode: i32}]
+    returns: i32
+    handler: vfs
+    method: access(path, mode)
+
+  - name: chmod
+    params: [{path: str}, {mode: u32}]
+    returns: i32
+    handler: vfs
+    method: chmod(path, mode)
+
+  - name: chown
+    params: [{path: str}, {owner: u32}, {group: u32}]
+    returns: i32
+    handler: vfs
+    method: chown(path, owner, group)
+
+  - name: fchmod
+    params: [{fd: i32}, {mode: u32}]
+    returns: i32
+    handler: vfs
+    method: fchmod(fd, mode)
+
+  - name: fchown
+    params: [{fd: i32}, {owner: u32}, {group: u32}]
+    returns: i32
+    handler: vfs
+    method: fchown(fd, owner, group)
+
+  - name: umask
+    params: [{mask: u32}]
+    returns: u32
+    handler: vfs
+    method: umask(mask)
+
+# =============================================================================
+# Directory Operations - go through VFS
+# =============================================================================
+dir_ops:
+  - name: mkdir
+    params: [{path: str}, {mode: u32}]
+    returns: i32
+    handler: vfs
+    method: mkdir(path, mode)
+
+  - name: rmdir
+    params: [{path: str}]
+    returns: i32
+    handler: vfs
+    method: rmdir(path)
+
+  - name: chdir
+    params: [{path: str}]
+    returns: i32
+    handler: vfs
+    method: chdir(path)
+
+  - name: fchdir
+    params: [{fd: i32}]
+    returns: i32
+    handler: vfs
+    method: fchdir(fd)
+
+  - name: getcwd
+    params: [{buf: ptr}, {size: u32}]
+    returns: i32
+    handler: vfs
+    method: getcwd((char*)buf, size)
+
+  - name: getdents
+    params: [{fd: i32}, {buf: ptr}, {count: u32}]
+    returns: i32
+    handler: vfs
+    method: getdents(fd, buf, count)
+
+  - name: opendir
+    params: [{path: str}]
+    returns: ptr
+    handler: vfs
+    method: opendir(path)
+
+  - name: readdir
+    params: [{dir: ptr}]
+    returns: ptr
+    handler: vfs
+    method: readdir(dir)
+
+  - name: closedir
+    params: [{dir: ptr}]
+    returns: i32
+    handler: vfs
+    method: closedir(dir)
+
+# =============================================================================
+# Link Operations - go through VFS
+# =============================================================================
+link_ops:
+  - name: link
+    params: [{oldpath: str}, {newpath: str}]
+    returns: i32
+    handler: vfs
+    method: link(oldpath, newpath)
+
+  - name: unlink
+    params: [{path: str}]
+    returns: i32
+    handler: vfs
+    method: unlink(path)
+
+  - name: symlink
+    params: [{target: str}, {linkpath: str}]
+    returns: i32
+    handler: vfs
+    method: symlink(target, linkpath)
+
+  - name: readlink
+    params: [{path: str}, {buf: ptr}, {bufsiz: u32}]
+    returns: i32
+    handler: vfs
+    method: readlink(path, (char*)buf, bufsiz)
+
+  - name: rename
+    params: [{oldpath: str}, {newpath: str}]
+    returns: i32
+    handler: vfs
+    method: rename(oldpath, newpath)
+
+# =============================================================================
+# Process Operations - go through Runtime
+# =============================================================================
+process:
+  - name: getpid
+    params: []
+    returns: i32
+    handler: runtime
+    method: getpid()
+
+  - name: getppid
+    params: []
+    returns: i32
+    handler: runtime
+    method: getppid()
+
+  - name: fork
+    params: []
+    returns: i32
+    handler: runtime
+    method: fork()
+
+  - name: vfork
+    params: []
+    returns: i32
+    handler: runtime
+    method: vfork()
+
+  - name: execve
+    params: [{path: str}, {argv: ptr}, {envp: ptr}]
+    returns: i32
+    handler: runtime
+    method: execve(path, argv, envp)
+    noreturn: true
+
+  - name: exit
+    params: [{status: i32}]
+    returns: void
+    handler: runtime
+    method: exit(status)
+    noreturn: true
+
+  - name: _exit
+    params: [{status: i32}]
+    returns: void
+    handler: runtime
+    method: _exit(status)
+    noreturn: true
+
+  - name: waitpid
+    params: [{pid: i32}, {status: ptr}, {options: i32}]
+    returns: i32
+    handler: runtime
+    method: waitpid(pid, status, options)
+
+  - name: wait
+    params: [{status: ptr}]
+    returns: i32
+    handler: runtime
+    method: wait(status)
+
+  - name: getpgrp
+    params: []
+    returns: i32
+    handler: runtime
+    method: getpgrp()
+
+  - name: setpgid
+    params: [{pid: i32}, {pgid: i32}]
+    returns: i32
+    handler: runtime
+    method: setpgid(pid, pgid)
+
+  - name: setsid
+    params: []
+    returns: i32
+    handler: runtime
+    method: setsid()
+
+  - name: getsid
+    params: [{pid: i32}]
+    returns: i32
+    handler: runtime
+    method: getsid(pid)
+
+# =============================================================================
+# User/Group - stubs (always root)
+# =============================================================================
+user_group:
+  - name: getuid
+    params: []
+    returns: u32
+    handler: stub
+    value: 0
+
+  - name: geteuid
+    params: []
+    returns: u32
+    handler: stub
+    value: 0
+
+  - name: getgid
+    params: []
+    returns: u32
+    handler: stub
+    value: 0
+
+  - name: getegid
+    params: []
+    returns: u32
+    handler: stub
+    value: 0
+
+  - name: setuid
+    params: [{uid: u32}]
+    returns: i32
+    handler: stub
+    value: 0
+
+  - name: setgid
+    params: [{gid: u32}]
+    returns: i32
+    handler: stub
+    value: 0
+
+  - name: getgroups
+    params: [{size: i32}, {list: ptr}]
+    returns: i32
+    handler: stub
+    value: 0
+
+  - name: setgroups
+    params: [{size: i32}, {list: ptr}]
+    returns: i32
+    handler: stub
+    value: 0
+
+# =============================================================================
+# Time - passthrough to native
+# =============================================================================
+time:
+  - name: time
+    params: [{tloc: ptr}]
+    returns: i64
+    handler: passthrough
+    native: time((time_t*)tloc)
+
+  - name: gettimeofday
+    params: [{tv: ptr}, {tz: ptr}]
+    returns: i32
+    handler: passthrough
+    native: gettimeofday((struct timeval*)tv, (struct timezone*)tz)
+
+  - name: clock_gettime
+    params: [{clk_id: i32}, {tp: ptr}]
+    returns: i32
+    handler: passthrough
+    native: clock_gettime(clk_id, (struct timespec*)tp)
+
+  - name: nanosleep
+    params: [{req: ptr}, {rem: ptr}]
+    returns: i32
+    handler: passthrough
+    native: nanosleep((const struct timespec*)req, (struct timespec*)rem)
+
+# =============================================================================
+# Signals - stubs (no real signal support)
+# =============================================================================
+signals:
+  - name: kill
+    params: [{pid: i32}, {sig: i32}]
+    returns: i32
+    handler: stub
+    value: 0
+
+  - name: sigaction
+    params: [{signum: i32}, {act: ptr}, {oldact: ptr}]
+    returns: i32
+    handler: stub
+    value: 0
+
+  - name: sigprocmask
+    params: [{how: i32}, {set: ptr}, {oldset: ptr}]
+    returns: i32
+    handler: stub
+    value: 0
+
+  - name: signal
+    params: [{signum: i32}, {handler: ptr}]
+    returns: ptr
+    handler: stub
+    value: 0
+
+# =============================================================================
+# Pipe - go through VFS
+# =============================================================================
+pipe:
+  - name: pipe
+    params: [{pipefd: ptr}]
+    returns: i32
+    handler: vfs
+    method: pipe((int*)pipefd)
+
+  - name: pipe2
+    params: [{pipefd: ptr}, {flags: i32}]
+    returns: i32
+    handler: vfs
+    method: pipe2((int*)pipefd, flags)
+
+# =============================================================================
+# Varargs bridge - handles variadic function calls from WASM
+# =============================================================================
+varargs:
+  - name: varargs_call
+    params: [{func_id: i32}, {arg1: ptr}, {arg2: ptr}, {arg3: ptr}, {args: ptr}]
+    returns: i32
+    handler: runtime
+    method: varargs_call(func_id, arg1, arg2, arg3, args)
+
+# =============================================================================
+# Misc - passthrough or stub
+# =============================================================================
+misc:
+  - name: ioctl
+    params: [{fd: i32}, {request: u64}, {arg: ptr}]
+    returns: i32
+    handler: vfs
+    method: ioctl(fd, request, arg)
+
+  - name: isatty
+    params: [{fd: i32}]
+    returns: i32
+    handler: vfs
+    method: isatty(fd)
+
+  - name: uname
+    params: [{buf: ptr}]
+    returns: i32
+    handler: runtime
+    method: uname(buf)
+
+  - name: getrlimit
+    params: [{resource: i32}, {rlim: ptr}]
+    returns: i32
+    handler: passthrough
+    native: getrlimit(resource, (struct rlimit*)rlim)
+
+  - name: setrlimit
+    params: [{resource: i32}, {rlim: ptr}]
+    returns: i32
+    handler: stub
+    value: 0
+
+  - name: getrusage
+    params: [{who: i32}, {usage: ptr}]
+    returns: i32
+    handler: passthrough
+    native: getrusage(who, (struct rusage*)usage)
+
+  - name: sysinfo
+    params: [{info: ptr}]
+    returns: i32
+    handler: passthrough
+    native: sysinfo((struct sysinfo*)info)
+
+  - name: brk
+    params: [{addr: ptr}]
+    returns: i32
+    handler: stub
+    value: 0
+
+  - name: sbrk
+    params: [{increment: i64}]
+    returns: ptr
+    handler: stub
+    value: 0
+
+# =============================================================================
+# Memory Functions - wasm-side implementations
+# =============================================================================
+memory:
+  - name: memcpy
+    params: [{dest: ptr}, {src: ptr}, {n: u32}]
+    returns: ptr
+    handler: wasm_impl
+    body: "char*d=(char*)dest;const char*s=(const char*)src;while(n--)*d++=*s++;return dest;"
+
+  - name: memmove
+    params: [{dest: ptr}, {src: ptr}, {n: u32}]
+    returns: ptr
+    handler: wasm_impl
+    body: "char*d=(char*)dest;const char*s=(const char*)src;if(d<s){while(n--)*d++=*s++;}else{d+=n;s+=n;while(n--)*--d=*--s;}return dest;"
+
+  - name: memset
+    params: [{dest: ptr}, {c: i32}, {n: u32}]
+    returns: ptr
+    handler: wasm_impl
+    body: "unsigned char*d=(unsigned char*)dest;while(n--)*d++=(unsigned char)c;return dest;"
+
+  - name: memcmp
+    params: [{s1: ptr}, {s2: ptr}, {n: u32}]
+    returns: i32
+    handler: wasm_impl
+    body: "const unsigned char*a=(const unsigned char*)s1;const unsigned char*b=(const unsigned char*)s2;while(n--){if(*a!=*b)return*a-*b;a++;b++;}return 0;"
+
+  - name: memchr
+    params: [{s: ptr}, {c: i32}, {n: u32}]
+    returns: ptr
+    handler: wasm_impl
+    body: "const unsigned char*p=(const unsigned char*)s;while(n--){if(*p==(unsigned char)c)return(void*)p;p++;}return 0;"
+
+# =============================================================================
+# String Functions - wasm-side implementations
+# =============================================================================
+string:
+  - name: strlen
+    params: [{s: str}]
+    returns: u32
+    handler: wasm_impl
+    body: "const char*p=s;while(*p)p++;return p-s;"
+
+  - name: strcpy
+    params: [{dest: ptr}, {src: str}]
+    returns: ptr
+    handler: wasm_impl
+    body: "char*d=(char*)dest;while((*d++=*src++));return dest;"
+
+  - name: strncpy
+    params: [{dest: ptr}, {src: str}, {n: u32}]
+    returns: ptr
+    handler: wasm_impl
+    body: "char*d=(char*)dest;while(n&&(*d++=*src++))n--;while(n--)*d++=0;return dest;"
+
+  - name: strcat
+    params: [{dest: ptr}, {src: str}]
+    returns: ptr
+    handler: wasm_impl
+    body: "char*d=(char*)dest;while(*d)d++;while((*d++=*src++));return dest;"
+
+  - name: strncat
+    params: [{dest: ptr}, {src: str}, {n: u32}]
+    returns: ptr
+    handler: wasm_impl
+    body: "char*d=(char*)dest;while(*d)d++;while(n--&&(*d++=*src++));*d=0;return dest;"
+
+  - name: strcmp
+    params: [{s1: str}, {s2: str}]
+    returns: i32
+    handler: wasm_impl
+    body: "while(*s1&&*s1==*s2){s1++;s2++;}return*(unsigned char*)s1-*(unsigned char*)s2;"
+
+  - name: strncmp
+    params: [{s1: str}, {s2: str}, {n: u32}]
+    returns: i32
+    handler: wasm_impl
+    body: "while(n--&&*s1&&*s1==*s2){s1++;s2++;}return n==(uint32_t)-1?0:*(unsigned char*)s1-*(unsigned char*)s2;"
+
+  - name: strchr
+    params: [{s: str}, {c: i32}]
+    returns: ptr
+    handler: wasm_impl
+    body: "while(*s){if(*s==(char)c)return(void*)s;s++;}return c?0:(void*)s;"
+
+  - name: strrchr
+    params: [{s: str}, {c: i32}]
+    returns: ptr
+    handler: wasm_impl
+    body: "const char*r=0;while(*s){if(*s==(char)c)r=s;s++;}return(void*)(c?r:s);"
+
+  - name: strstr
+    params: [{haystack: str}, {needle: str}]
+    returns: ptr
+    handler: wasm_impl
+    body: "if(!*needle)return(void*)haystack;for(;*haystack;haystack++){const char*h=haystack,*n=needle;while(*h&&*n&&*h==*n){h++;n++;}if(!*n)return(void*)haystack;}return 0;"
+
+  - name: strdup
+    params: [{s: str}]
+    returns: ptr
+    handler: wasm_impl
+    body: "uint32_t len=strlen(s);char*d=(char*)malloc(len+1);if(d)memcpy(d,s,len+1);return d;"
+
+  - name: strtok
+    params: [{s: str}, {delim: str}]
+    returns: ptr
+    handler: wasm_impl
+    body: "static char*last;if(s)last=s;if(!last)return 0;while(*last){const char*d=delim;int found=0;while(*d)if(*last==*d++){found=1;break;}if(!found)break;last++;}if(!*last)return 0;char*start=last;while(*last){const char*d=delim;int found=0;while(*d)if(*last==*d++){found=1;break;}if(found){*last++=0;return start;}last++;}return start;"
+
+# =============================================================================
+# Character Functions - wasm-side implementations
+# =============================================================================
+ctype:
+  - name: isalpha
+    params: [{c: i32}]
+    returns: i32
+    handler: wasm_impl
+    body: "return(c>='A'&&c<='Z')||(c>='a'&&c<='z');"
+
+  - name: isdigit
+    params: [{c: i32}]
+    returns: i32
+    handler: wasm_impl
+    body: "return c>='0'&&c<='9';"
+
+  - name: isalnum
+    params: [{c: i32}]
+    returns: i32
+    handler: wasm_impl
+    body: "return(c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9');"
+
+  - name: isspace
+    params: [{c: i32}]
+    returns: i32
+    handler: wasm_impl
+    body: "return c==' '||c=='\\t'||c=='\\n'||c=='\\r'||c=='\\f'||c=='\\v';"
+
+  - name: isupper
+    params: [{c: i32}]
+    returns: i32
+    handler: wasm_impl
+    body: "return c>='A'&&c<='Z';"
+
+  - name: islower
+    params: [{c: i32}]
+    returns: i32
+    handler: wasm_impl
+    body: "return c>='a'&&c<='z';"
+
+  - name: toupper
+    params: [{c: i32}]
+    returns: i32
+    handler: wasm_impl
+    body: "return(c>='a'&&c<='z')?c-32:c;"
+
+  - name: tolower
+    params: [{c: i32}]
+    returns: i32
+    handler: wasm_impl
+    body: "return(c>='A'&&c<='Z')?c+32:c;"
+
+  - name: isprint
+    params: [{c: i32}]
+    returns: i32
+    handler: wasm_impl
+    body: "return c>=0x20&&c<=0x7e;"
+
+  - name: isxdigit
+    params: [{c: i32}]
+    returns: i32
+    handler: wasm_impl
+    body: "return(c>='0'&&c<='9')||(c>='A'&&c<='F')||(c>='a'&&c<='f');"
+
+# =============================================================================
+# Conversion Functions - wasm-side implementations
+# =============================================================================
+conversion:
+  - name: atoi
+    params: [{s: str}]
+    returns: i32
+    handler: wasm_impl
+    body: "int n=0,neg=0;while(*s==' ')s++;if(*s=='-'){neg=1;s++;}else if(*s=='+')s++;while(*s>='0'&&*s<='9')n=n*10+(*s++-'0');return neg?-n:n;"
+
+  - name: atol
+    params: [{s: str}]
+    returns: i64
+    handler: wasm_impl
+    body: "long n=0,neg=0;while(*s==' ')s++;if(*s=='-'){neg=1;s++;}else if(*s=='+')s++;while(*s>='0'&&*s<='9')n=n*10+(*s++-'0');return neg?-n:n;"
+
+  - name: abs
+    params: [{n: i32}]
+    returns: i32
+    handler: wasm_impl
+    body: "return n<0?-n:n;"
+
+# =============================================================================
+# Memory Allocation - wasm-side bump allocator
+# =============================================================================
+malloc:
+  - name: malloc
+    params: [{size: u32}]
+    returns: ptr
+    handler: wasm_impl
+    body: "extern unsigned char __heap_base;static unsigned char*heap=0;if(!heap)heap=&__heap_base;unsigned char*p=heap;heap+=(size+7)&~7;return p;"
+
+  - name: calloc
+    params: [{nmemb: u32}, {size: u32}]
+    returns: ptr
+    handler: wasm_impl
+    body: "void*p=malloc((uint32_t)(nmemb*size));if(p)memset(p,0,(uint32_t)(nmemb*size));return p;"
+
+  - name: realloc
+    params: [{ptr: ptr}, {size: u32}]
+    returns: ptr
+    handler: wasm_impl
+    body: "if(!ptr)return malloc(size);void*n=malloc(size);if(n)memcpy(n,ptr,size);return n;"
+
+  - name: free
+    params: [{ptr: ptr}]
+    returns: void
+    handler: wasm_impl
+    body: "(void)ptr;"
+
+# =============================================================================
+# PASSTHROUGH namespace - C Library functions bridged to native libc
+# Prefix category names with "passthrough_" to use passthrough namespace
+# =============================================================================
+
+passthrough_stdio:
+  - name: printf
+    params: [{fmt: str}]
+    returns: i32
+    wasm_variadic: true
+
+  - name: fprintf
+    params: [{stream: ptr}, {fmt: str}]
+    returns: i32
+    wasm_variadic: true
+
+  - name: sprintf
+    params: [{str: ptr}, {fmt: str}]
+    returns: i32
+    wasm_variadic: true
+
+  - name: snprintf
+    params: [{str: ptr}, {size: u32}, {fmt: str}]
+    returns: i32
+    wasm_variadic: true
+
+  - name: dprintf
+    params: [{fd: i32}, {fmt: str}]
+    returns: i32
+    wasm_variadic: true
+
+  - name: sscanf
+    params: [{str: str}, {fmt: str}]
+    returns: i32
+    wasm_variadic: true
+
+  # va_list variants - take pre-packed args, forward to varargs_call
+  - name: vprintf
+    params: [{fmt: str}, {ap: ptr}]
+    returns: i32
+    wasm_valist: true
+    vfunc_id: 1
+
+  - name: vfprintf
+    params: [{stream: ptr}, {fmt: str}, {ap: ptr}]
+    returns: i32
+    wasm_valist: true
+    vfunc_id: 2
+
+  - name: vsprintf
+    params: [{str: ptr}, {fmt: str}, {ap: ptr}]
+    returns: i32
+    wasm_valist: true
+    vfunc_id: 3
+
+  - name: vsnprintf
+    params: [{str: ptr}, {size: u32}, {fmt: str}, {ap: ptr}]
+    returns: i32
+    wasm_valist: true
+    vfunc_id: 4
+
+  - name: vasprintf
+    params: [{strp: ptr}, {fmt: str}, {ap: ptr}]
+    returns: i32
+    wasm_valist: true
+    vfunc_id: 7
+
+  - name: puts
+    params: [{s: str}]
+    returns: i32
+    handler: passthrough
+    native: puts(s)
+
+  - name: fputs_unlocked
+    params: [{s: str}, {stream: ptr}]
+    returns: i32
+    handler: passthrough
+    native: fputs(s, (FILE*)stream)
+
+  - name: putchar_unlocked
+    params: [{c: i32}]
+    returns: i32
+    handler: passthrough
+    native: putchar(c)
+
+  - name: putc_unlocked
+    params: [{c: i32}, {stream: ptr}]
+    returns: i32
+    handler: passthrough
+    native: putc(c, (FILE*)stream)
+
+  - name: getc_unlocked
+    params: [{stream: ptr}]
+    returns: i32
+    handler: passthrough
+    native: getc((FILE*)stream)
+
+  - name: getchar_unlocked
+    params: []
+    returns: i32
+    handler: passthrough
+    native: getchar()
+
+  - name: fopen
+    params: [{path: str}, {mode: str}]
+    returns: ptr
+    handler: passthrough
+    native: fopen(path, mode)
+
+  - name: fdopen
+    params: [{fd: i32}, {mode: str}]
+    returns: ptr
+    handler: passthrough
+    native: fdopen(fd, mode)
+
+  - name: freopen
+    params: [{path: str}, {mode: str}, {stream: ptr}]
+    returns: ptr
+    handler: passthrough
+    native: freopen(path, mode, (FILE*)stream)
+
+  - name: fclose
+    params: [{stream: ptr}]
+    returns: i32
+    handler: passthrough
+    native: fclose((FILE*)stream)
+
+  - name: fflush
+    params: [{stream: ptr}]
+    returns: i32
+    handler: passthrough
+    native: fflush((FILE*)stream)
+
+  - name: fread
+    params: [{ptr: ptr}, {size: u32}, {nmemb: u32}, {stream: ptr}]
+    returns: u32
+    handler: passthrough
+    native: fread(ptr, size, nmemb, (FILE*)stream)
+
+  - name: fwrite
+    params: [{ptr: ptr}, {size: u32}, {nmemb: u32}, {stream: ptr}]
+    returns: u32
+    handler: passthrough
+    native: fwrite(ptr, size, nmemb, (FILE*)stream)
+
+  - name: fseeko
+    params: [{stream: ptr}, {offset: i64}, {whence: i32}]
+    returns: i32
+    handler: passthrough
+    native: fseeko((FILE*)stream, offset, whence)
+
+  - name: fgets_unlocked
+    params: [{s: ptr}, {size: i32}, {stream: ptr}]
+    returns: ptr
+    handler: passthrough
+    native: fgets((char*)s, size, (FILE*)stream)
+
+  - name: getline
+    params: [{lineptr: ptr}, {n: ptr}, {stream: ptr}]
+    returns: i64
+    handler: passthrough
+    native: getline((char**)lineptr, (size_t*)n, (FILE*)stream)
+
+  - name: ungetc
+    params: [{c: i32}, {stream: ptr}]
+    returns: i32
+    handler: passthrough
+    native: ungetc(c, (FILE*)stream)
+
+  - name: setbuf
+    params: [{stream: ptr}, {buf: ptr}]
+    returns: void
+    handler: passthrough
+    native: setbuf((FILE*)stream, (char*)buf)
+
+  - name: setvbuf
+    params: [{stream: ptr}, {buf: ptr}, {mode: i32}, {size: u32}]
+    returns: i32
+    handler: passthrough
+    native: setvbuf((FILE*)stream, (char*)buf, mode, size)
+
+  - name: ferror_unlocked
+    params: [{stream: ptr}]
+    returns: i32
+    handler: passthrough
+    native: ferror((FILE*)stream)
+
+  - name: clearerr
+    params: [{stream: ptr}]
+    returns: void
+    handler: passthrough
+    native: clearerr((FILE*)stream)
+
+  - name: fileno_unlocked
+    params: [{stream: ptr}]
+    returns: i32
+    handler: passthrough
+    native: fileno((FILE*)stream)
+
+passthrough_string:
+  - name: strerror
+    params: [{errnum: i32}]
+    returns: ptr
+    handler: passthrough
+    native: strerror(errnum)
+
+  - name: stpcpy
+    params: [{dest: ptr}, {src: str}]
+    returns: ptr
+    handler: passthrough
+    native: stpcpy((char*)dest, src)
+
+  - name: stpncpy
+    params: [{dest: ptr}, {src: str}, {n: u32}]
+    returns: ptr
+    handler: passthrough
+    native: stpncpy((char*)dest, src, n)
+
+  - name: strcasecmp
+    params: [{s1: str}, {s2: str}]
+    returns: i32
+    handler: passthrough
+    native: strcasecmp(s1, s2)
+
+  - name: strncasecmp
+    params: [{s1: str}, {s2: str}, {n: u32}]
+    returns: i32
+    handler: passthrough
+    native: strncasecmp(s1, s2, n)
+
+  - name: strcasestr
+    params: [{haystack: str}, {needle: str}]
+    returns: ptr
+    handler: passthrough
+    native: strcasestr(haystack, needle)
+
+  - name: strspn
+    params: [{s: str}, {accept: str}]
+    returns: u32
+    handler: passthrough
+    native: strspn(s, accept)
+
+  - name: strcspn
+    params: [{s: str}, {reject: str}]
+    returns: u32
+    handler: passthrough
+    native: strcspn(s, reject)
+
+  - name: strpbrk
+    params: [{s: str}, {accept: str}]
+    returns: ptr
+    handler: passthrough
+    native: strpbrk(s, accept)
+
+  - name: strsep
+    params: [{stringp: ptr}, {delim: str}]
+    returns: ptr
+    handler: passthrough
+    native: strsep((char**)stringp, delim)
+
+  - name: strtok_r
+    params: [{str: ptr}, {delim: str}, {saveptr: ptr}]
+    returns: ptr
+    handler: passthrough
+    native: strtok_r((char*)str, delim, (char**)saveptr)
+
+  - name: strndup
+    params: [{s: str}, {n: u32}]
+    returns: ptr
+    handler: passthrough
+    native: strndup(s, n)
+
+  - name: strverscmp
+    params: [{s1: str}, {s2: str}]
+    returns: i32
+    handler: passthrough
+    native: strverscmp(s1, s2)
+
+passthrough_stdlib:
+  - name: getenv
+    params: [{name: str}]
+    returns: ptr
+    handler: passthrough
+    native: getenv(name)
+
+  - name: setenv
+    params: [{name: str}, {value: str}, {overwrite: i32}]
+    returns: i32
+    handler: passthrough
+    native: setenv(name, value, overwrite)
+
+  - name: unsetenv
+    params: [{name: str}]
+    returns: i32
+    handler: passthrough
+    native: unsetenv(name)
+
+  - name: putenv
+    params: [{string: ptr}]
+    returns: i32
+    handler: passthrough
+    native: putenv((char*)string)
+
+  - name: clearenv
+    params: []
+    returns: i32
+    handler: passthrough
+    native: clearenv()
+
+  - name: realpath
+    params: [{path: str}, {resolved_path: ptr}]
+    returns: ptr
+    handler: passthrough
+    native: realpath(path, (char*)resolved_path)
+
+  - name: dirname
+    params: [{path: ptr}]
+    returns: ptr
+    handler: passthrough
+    native: dirname((char*)path)
+
+  - name: qsort
+    params: [{base: ptr}, {nmemb: u32}, {size: u32}, {compar: ptr}]
+    returns: void
+    handler: passthrough
+    native: qsort(base, nmemb, size, (int(*)(const void*,const void*))compar)
+
+  - name: bsearch
+    params: [{key: ptr}, {base: ptr}, {nmemb: u32}, {size: u32}, {compar: ptr}]
+    returns: ptr
+    handler: passthrough
+    native: bsearch(key, base, nmemb, size, (int(*)(const void*,const void*))compar)
+
+  - name: abort
+    params: []
+    returns: void
+    handler: passthrough
+    native: abort()
+
+  - name: rand
+    params: []
+    returns: i32
+    handler: passthrough
+    native: rand()
+
+  - name: srand
+    params: [{seed: u32}]
+    returns: void
+    handler: passthrough
+    native: srand(seed)
+
+  - name: strtol
+    params: [{nptr: str}, {endptr: ptr}, {base: i32}]
+    returns: i64
+    handler: passthrough
+    native: strtol(nptr, (char**)endptr, base)
+
+  - name: strtoll
+    params: [{nptr: str}, {endptr: ptr}, {base: i32}]
+    returns: i64
+    handler: passthrough
+    native: strtoll(nptr, (char**)endptr, base)
+
+  - name: strtoul
+    params: [{nptr: str}, {endptr: ptr}, {base: i32}]
+    returns: u64
+    handler: passthrough
+    native: strtoul(nptr, (char**)endptr, base)
+
+  - name: strtoull
+    params: [{nptr: str}, {endptr: ptr}, {base: i32}]
+    returns: u64
+    handler: passthrough
+    native: strtoull(nptr, (char**)endptr, base)
+
+  - name: strtod
+    params: [{nptr: str}, {endptr: ptr}]
+    returns: i64
+    handler: stub
+    value: 0
+
+  - name: getpagesize
+    params: []
+    returns: i32
+    handler: passthrough
+    native: getpagesize()
+
+passthrough_time:
+  - name: localtime
+    params: [{timep: ptr}]
+    returns: ptr
+    handler: passthrough
+    native: localtime((const time_t*)timep)
+
+  - name: localtime_r
+    params: [{timep: ptr}, {result: ptr}]
+    returns: ptr
+    handler: passthrough
+    native: localtime_r((const time_t*)timep, (struct tm*)result)
+
+  - name: mktime
+    params: [{tm: ptr}]
+    returns: i64
+    handler: passthrough
+    native: mktime((struct tm*)tm)
+
+  - name: strftime
+    params: [{s: ptr}, {max: u32}, {format: str}, {tm: ptr}]
+    returns: u32
+    handler: passthrough
+    native: strftime((char*)s, max, format, (const struct tm*)tm)
+
+  - name: utimes
+    params: [{filename: str}, {times: ptr}]
+    returns: i32
+    handler: passthrough
+    native: utimes(filename, (const struct timeval*)times)
+
+  - name: futimens
+    params: [{fd: i32}, {times: ptr}]
+    returns: i32
+    handler: passthrough
+    native: futimens(fd, (const struct timespec*)times)
+
+  - name: utimensat
+    params: [{dirfd: i32}, {pathname: str}, {times: ptr}, {flags: i32}]
+    returns: i32
+    handler: passthrough
+    native: utimensat(dirfd, pathname, (const struct timespec*)times, flags)
+
+passthrough_misc:
+  - name: major
+    params: [{dev: u64}]
+    returns: u32
+    handler: passthrough
+    native: major(dev)
+
+  - name: minor
+    params: [{dev: u64}]
+    returns: u32
+    handler: passthrough
+    native: minor(dev)

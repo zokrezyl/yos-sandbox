@@ -1,77 +1,53 @@
-// yos-stubs.c - Real POSIX implementations for WASM busybox
-// Process functions call YOS runtime via wasm imports.
-// Other functions have minimal but real implementations.
+// yos-stubs.c - Supplementary POSIX implementations for WASM busybox
+// Functions NOT provided by yos-generated.c (which handles syscalls from YAML)
+// NO system headers - everything comes from wasm-compat.h
 
-#include "yos-stubs.h"
 #include "wasm-compat.h"
-#include <string.h>
-#include <errno.h>
-#include <stdarg.h>
+#include "regex.h"
+#include "sys/times.h"
+
+// Locale struct
+struct lconv {
+    char *decimal_point;
+    char *thousands_sep;
+    char *grouping;
+    char *int_curr_symbol;
+    char *currency_symbol;
+    char *mon_decimal_point;
+    char *mon_thousands_sep;
+    char *mon_grouping;
+    char *positive_sign;
+    char *negative_sign;
+    char int_frac_digits;
+    char frac_digits;
+    char p_cs_precedes;
+    char p_sep_by_space;
+    char n_cs_precedes;
+    char n_sep_by_space;
+    char p_sign_posn;
+    char n_sign_posn;
+};
+
+// errno storage
+int errno;
+int h_errno;
 
 // ICF_GUARD prevents wasm-ld ICF from merging functions with identical bodies
 #define ICF_GUARD(id) do { volatile int _icf = (id); (void)_icf; } while(0)
 
 // =====================================================================
-// Process management - calls YOS runtime
-// fork and vfork have DIFFERENT semantics:
-// - fork: copy memory, both run concurrently
-// - vfork: parent blocks until child exec/exit
+// Signals - stubs (no-op but real functions)
 // =====================================================================
 
-pid_t fork(void)  { return yos_fork(); }
-pid_t vfork(void) { return yos_vfork(); }
-
-__attribute__((used, noinline, visibility("default")))
-pid_t getpid(void) { return yos_getpid(); }
-
-__attribute__((used, noinline, visibility("default")))
-pid_t getppid(void) { return yos_getppid(); }
-
-int execvp(const char *file, char *const argv[]) {
-    yos_exec(file, (const char *const *)argv);
-    errno = ENOENT;
-    return -1;
-}
-int execv(const char *path, char *const argv[]) { return execvp(path, argv); }
-int execve(const char *path, char *const argv[], char *const envp[]) { return execvp(path, argv); }
-
-pid_t waitpid(pid_t pid, int *status, int options) {
-    if (options & WNOHANG) return 0;
-    int code = yos_wait(pid);
-    if (status) *status = (code & 0xff) << 8;
-    return pid;
-}
-pid_t wait(int *status) { return waitpid(-1, status, 0); }
-
-// =====================================================================
-// Signals - stubs (no-op but real functions, not inlined away)
-// =====================================================================
-
-int sigaction(int sig, const struct sigaction *act, struct sigaction *oact) {
-    if (oact) memset(oact, 0, sizeof(*oact));
-    return 0;
-}
-int sigprocmask(int how, const sigset_t *set, sigset_t *oset) {
-    if (oset) *oset = 0;
-    return 0;
-}
+// sigaction, sigprocmask provided by yos-generated.c
 int sigpending(sigset_t *set) { if (set) *set = 0; return 0; }
 int sigsuspend(const sigset_t *set) { errno = EINTR; return -1; }
-int kill(pid_t pid, int sig) { ICF_GUARD(200); (void)pid; (void)sig; return 0; }
+// kill provided by yos-generated.c
 int killpg(pid_t pgrp, int sig) { ICF_GUARD(201); (void)pgrp; (void)sig; return 0; }
 unsigned int alarm(unsigned int seconds) { ICF_GUARD(202); (void)seconds; return 0; }
 int pause(void) { errno = EINTR; return -1; }
 
-// signal/raise - normally from wasi-emulated-signal, we provide our own
-typedef void (*sighandler_t)(int);
-static sighandler_t _handlers[32] = {0};
-
-sighandler_t signal(int sig, sighandler_t handler) {
-    if (sig < 0 || sig >= 32) return (sighandler_t)-1;
-    sighandler_t old = _handlers[sig];
-    _handlers[sig] = handler;
-    return old;
-}
+// signal provided by yos-generated.c
 
 int raise(int sig) { return 0; }
 int sigemptyset(sigset_t *set) { if(set) memset(set,0,sizeof(*set)); return 0; }
@@ -81,40 +57,15 @@ int sigdelset(sigset_t *set, int sig) { return 0; }
 int sigismember(const sigset_t *set, int sig) { return 0; }
 
 // =====================================================================
-// Process groups / sessions - real implementations via YOS syscalls
+// Process groups - tcgetpgrp/tcsetpgrp not in generated code
 // =====================================================================
 
-pid_t getpgrp(void) { return yos_getpgrp(); }
-pid_t getpgid(pid_t pid) { return pid ? yos_getsid(pid) : yos_getpgrp(); }
-int setpgid(pid_t pid, pid_t pgid) { return yos_setpgid(pid, pgid); }
-pid_t setsid(void) { return yos_setsid(); }
-pid_t getsid(pid_t pid) { return yos_getsid(pid); }
-
-// Terminal process group - returns foreground pgrp of terminal
-pid_t tcgetpgrp(int fd) { (void)fd; return yos_getpgrp(); }
+pid_t tcgetpgrp(int fd) { (void)fd; return getpgrp(); }
 int tcsetpgrp(int fd, pid_t pgrp) { (void)fd; (void)pgrp; return 0; }
 
 // =====================================================================
-// User / group - single user system, always root (uid/gid 0)
+// User / group lookups - not in generated code
 // =====================================================================
-
-uid_t getuid(void)  { ICF_GUARD(100); return 0; }
-uid_t geteuid(void) { ICF_GUARD(101); return 0; }
-gid_t getgid(void)  { ICF_GUARD(102); return 0; }
-gid_t getegid(void) { ICF_GUARD(103); return 0; }
-int setuid(uid_t u)  { ICF_GUARD(104); (void)u; return 0; }
-int setgid(gid_t g)  { ICF_GUARD(105); (void)g; return 0; }
-int seteuid(uid_t u) { ICF_GUARD(106); (void)u; return 0; }
-int setegid(gid_t g) { ICF_GUARD(107); (void)g; return 0; }
-int setreuid(uid_t r, uid_t e)  { ICF_GUARD(108); (void)r; (void)e; return 0; }
-int setregid(gid_t r, gid_t e)  { ICF_GUARD(109); (void)r; (void)e; return 0; }
-int setresuid(uid_t r, uid_t e, uid_t s) { ICF_GUARD(110); (void)r; (void)e; (void)s; return 0; }
-int setresgid(gid_t r, gid_t e, gid_t s) { ICF_GUARD(111); (void)r; (void)e; (void)s; return 0; }
-int getresuid(uid_t *r, uid_t *e, uid_t *s) { *r=*e=*s=0; return 0; }
-int getresgid(gid_t *r, gid_t *e, gid_t *s) { *r=*e=*s=0; return 0; }
-int getgroups(int sz, gid_t list[]) { ICF_GUARD(114); (void)sz; (void)list; return 0; }
-int setgroups(size_t sz, const gid_t *list) { ICF_GUARD(115); (void)sz; (void)list; return 0; }
-int initgroups(const char *user, gid_t group) { ICF_GUARD(116); (void)user; (void)group; return 0; }
 
 static struct passwd _pw = {
     (char*)"root", (char*)"x", 0, 0,
@@ -132,35 +83,18 @@ struct group *getgrnam(const char *n) { return &_gr; }
 void endgrent(void) {}
 
 // =====================================================================
-// File operations
+// File operations not in generated code
 // =====================================================================
 
-int pipe(int fd[2]) { errno = ENOSYS; return -1; }
-int pipe2(int fd[2], int flags) { errno = ENOSYS; return -1; }
-int dup(int fd) { errno = ENOSYS; return -1; }
-int dup2(int oldfd, int newfd) { errno = ENOSYS; return -1; }
+// pipe, pipe2, dup2 provided by yos-generated.c
 int dup3(int oldfd, int newfd, int flags) { errno = ENOSYS; return -1; }
-int fcntl(int fd, int cmd, ...) { return 0; }
 int ioctl(int fd, unsigned long req, ...) { return -1; }
-int isatty(int fd) { return fd <= 2; }
+// isatty provided by yos-generated.c
 int flock(int fd, int op) { return 0; }
-int chown(const char *p, uid_t o, gid_t g) { return 0; }
-int fchown(int fd, uid_t o, gid_t g) { return 0; }
 int lchown(const char *p, uid_t o, gid_t g) { return 0; }
-int mknod(const char *p, int m, int d) { errno = ENOSYS; return -1; }
-int mkfifo(const char *p, int m) { errno = ENOSYS; return -1; }
-// link, symlink, readlink, access, utime provided by wasi-libc
-int umask(int m) { return 0022; }
-int chdir(const char *path) { errno = ENOSYS; return -1; }
-int fchdir(int fd) { errno = ENOSYS; return -1; }
+int mknod(const char *p, mode_t m, dev_t d) { (void)p; (void)m; (void)d; errno = ENOSYS; return -1; }
+int mkfifo(const char *p, mode_t m) { (void)p; (void)m; errno = ENOSYS; return -1; }
 long sysconf(int name) { return -1; }
-
-static char _cwd[] = "/";
-char *getcwd(char *buf, size_t size) {
-    if (size < 2) { errno = ERANGE; return 0; }
-    strcpy(buf, _cwd);
-    return buf;
-}
 
 // =====================================================================
 // Terminal
@@ -176,15 +110,14 @@ int tcdrain(int fd) { return 0; }
 int tcflush(int fd, int q) { return 0; }
 int tcsendbreak(int fd, int d) { return 0; }
 int tcflow(int fd, int action) { return 0; }
-
 char *ttyname(int fd) { return (char*)"/dev/tty"; }
+int ttyname_r(int fd, char *buf, size_t len) { if (buf && len > 0) strcpy(buf, "/dev/tty"); return 0; }
 
 // =====================================================================
 // Resource limits
 // =====================================================================
 
-int getrlimit(int r, struct rlimit *l) { l->rlim_cur = l->rlim_max = 1024; return 0; }
-int setrlimit(int r, const struct rlimit *l) { return 0; }
+// getrlimit, setrlimit provided by yos-generated.c
 
 // =====================================================================
 // Sleep
@@ -192,20 +125,13 @@ int setrlimit(int r, const struct rlimit *l) { return 0; }
 
 unsigned int sleep(unsigned int s) { return 0; }
 int usleep(unsigned int us) { return 0; }
+// nanosleep provided by yos-generated.c
 
 // =====================================================================
 // utsname
 // =====================================================================
 
-int uname(struct utsname *buf) {
-    memset(buf, 0, sizeof(*buf));
-    strcpy(buf->sysname, "YOS");
-    strcpy(buf->nodename, "wasm");
-    strcpy(buf->release, "0.1.0");
-    strcpy(buf->version, "YOS WASM Runtime");
-    strcpy(buf->machine, "wasm32");
-    return 0;
-}
+// uname provided by yos-generated.c
 
 int gethostname(char *n, size_t l) { strcpy(n, "wasm"); return 0; }
 int chroot(const char *p) { errno = ENOSYS; return -1; }
@@ -215,21 +141,24 @@ int nice(int i) { return 0; }
 // mmap
 // =====================================================================
 
-void *mmap(void *a, size_t l, int p, int f, int fd, long o) { return MAP_FAILED; }
+void *mmap(void *a, size_t l, int p, int f, int fd, off_t o) { (void)a; (void)l; (void)p; (void)f; (void)fd; (void)o; return MAP_FAILED; }
 int munmap(void *a, size_t l) { return -1; }
 int mprotect(void *a, size_t l, int p) { return -1; }
 int msync(void *a, size_t l, int f) { return -1; }
 int madvise(void *a, size_t l, int adv) { return 0; }
 
 // =====================================================================
-// Network (stubs - not functional but not dead-code-eliminated)
+// Network (stubs)
 // =====================================================================
 
 const char *hstrerror(int err) { return "not supported"; }
 struct hostent *gethostbyname(const char *n) { return 0; }
-struct hostent *gethostbyaddr(const void *a, unsigned int l, int t) { return 0; }
+struct hostent *gethostbyname2(const char *n, int af) { return 0; }
+struct hostent *gethostbyaddr(const void *a, socklen_t l, int t) { return 0; }
 struct servent *getservbyname(const char *n, const char *p) { return 0; }
 struct servent *getservbyport(int p, const char *pr) { return 0; }
+struct protoent *getprotobyname(const char *name) { return 0; }
+struct protoent *getprotobynumber(int proto) { return 0; }
 int getaddrinfo(const char *n, const char *s, const struct addrinfo *h, struct addrinfo **r) { return -1; }
 void freeaddrinfo(struct addrinfo *r) {}
 const char *gai_strerror(int e) { return "not supported"; }
@@ -240,10 +169,10 @@ int bind(int s, const struct sockaddr *a, socklen_t l) { errno = ENOSYS; return 
 int listen(int s, int b) { errno = ENOSYS; return -1; }
 int accept(int s, struct sockaddr *a, socklen_t *l) { errno = ENOSYS; return -1; }
 int connect(int s, const struct sockaddr *a, socklen_t l) { errno = ENOSYS; return -1; }
-long send(int s, const void *b, size_t l, int f) { errno = ENOSYS; return -1; }
-long recv(int s, void *b, size_t l, int f) { errno = ENOSYS; return -1; }
-long sendto(int s, const void *b, size_t l, int f, const struct sockaddr *a, socklen_t al) { errno = ENOSYS; return -1; }
-long recvfrom(int s, void *b, size_t l, int f, struct sockaddr *a, socklen_t *al) { errno = ENOSYS; return -1; }
+ssize_t send(int s, const void *b, size_t l, int f) { errno = ENOSYS; return -1; }
+ssize_t recv(int s, void *b, size_t l, int f) { errno = ENOSYS; return -1; }
+ssize_t sendto(int s, const void *b, size_t l, int f, const struct sockaddr *a, socklen_t al) { errno = ENOSYS; return -1; }
+ssize_t recvfrom(int s, void *b, size_t l, int f, struct sockaddr *a, socklen_t *al) { errno = ENOSYS; return -1; }
 int setsockopt(int s, int lv, int n, const void *v, socklen_t l) { errno = ENOSYS; return -1; }
 int getsockopt(int s, int lv, int n, void *v, socklen_t *l) { errno = ENOSYS; return -1; }
 int getsockname(int s, struct sockaddr *a, socklen_t *l) { errno = ENOSYS; return -1; }
@@ -258,6 +187,8 @@ int inet_aton(const char *cp, struct in_addr *inp) { return 0; }
 char *inet_ntoa(struct in_addr in) { return (char*)"0.0.0.0"; }
 const char *inet_ntop(int af, const void *s, char *d, socklen_t sz) { strcpy(d, "0.0.0.0"); return d; }
 int inet_pton(int af, const char *s, void *d) { return 0; }
+unsigned int if_nametoindex(const char *ifname) { return 0; }
+char *if_indextoname(unsigned int ifindex, char *ifname) { return 0; }
 
 // =====================================================================
 // Poll / syslog / mntent
@@ -269,57 +200,286 @@ void openlog(const char *i, int o, int f) {}
 void closelog(void) {}
 void syslog(int p, const char *fmt, ...) {}
 
-void *setmntent(const char *f, const char *t) { return 0; }
-struct mntent *getmntent(void *f) { return 0; }
-int endmntent(void *f) { return 1; }
+FILE *setmntent(const char *f, const char *t) { return 0; }
+struct mntent *getmntent(FILE *f) { return 0; }
+int endmntent(FILE *f) { return 1; }
 
 // =====================================================================
-// main wrapper - wasi-libc expects 'main' but clang renames main(argc,argv)
-// to __main_argc_argv. Use export_name to force "main" symbol.
+// setjmp/longjmp - minimal stubs
 // =====================================================================
 
-extern int __main_argc_argv(int argc, char **argv);
-
-__attribute__((export_name("main")))
-int __yos_main_wrapper(int argc, char **argv) {
-    return __main_argc_argv(argc, argv);
-}
-
-// =====================================================================
-// Missing POSIX stubs
-// =====================================================================
-int mkstemp(char *tmpl) { errno = ENOSYS; return -1; }
-int ttyname_r(int fd, char *buf, size_t len) { if (buf && len > 0) buf[0] = 0; return 0; }
-int settimeofday(const void *tv, const void *tz) { return 0; }
-
-// Signal - __SIG_IGN must be a function, not a pointer
-void __SIG_IGN(int sig) { (void)sig; }
-
-// setjmp/longjmp - minimal stubs (limited functionality without wasm exceptions)
-// jmp_buf is typically an array - we use it to store a marker
-typedef int jmp_buf[16];
 int setjmp(jmp_buf env) { env[0] = 0; return 0; }
-void longjmp(jmp_buf env, int val) { (void)env; (void)val; __builtin_trap(); }
+void longjmp(jmp_buf env, int val) { __builtin_trap(); }
 int _setjmp(jmp_buf env) { return setjmp(env); }
 void _longjmp(jmp_buf env, int val) { longjmp(env, val); }
-int sigsetjmp(jmp_buf env, int savemask) { (void)savemask; return setjmp(env); }
+int sigsetjmp(jmp_buf env, int savemask) { return setjmp(env); }
 void siglongjmp(jmp_buf env, int val) { longjmp(env, val); }
-char *strsignal(int sig) { (void)sig; return (char*)"signal"; }
+char *strsignal(int sig) { return (char*)"signal"; }
+void __SIG_IGN(int sig) {}
 
-// Process
-void *popen(const char *cmd, const char *mode) { (void)cmd; (void)mode; errno = ENOSYS; return 0; }
-int pclose(void *stream) { (void)stream; errno = ENOSYS; return -1; }
+// =====================================================================
+// Process stubs
+// =====================================================================
 
+FILE *popen(const char *cmd, const char *mode) { errno = ENOSYS; return 0; }
+int pclose(FILE *stream) { errno = ENOSYS; return -1; }
+int execvp(const char *file, char *const argv[]) { errno = ENOSYS; return -1; }
+int execv(const char *path, char *const argv[]) { errno = ENOSYS; return -1; }
+pid_t getpgid(pid_t pid) { return pid == 0 ? getpgrp() : getsid(pid); }
+
+// =====================================================================
 // Time
-int clock_settime(int clk, const void *tp) { (void)clk; (void)tp; return 0; }
+// =====================================================================
 
+int settimeofday(const struct timeval *tv, const struct timezone *tz) { return 0; }
+int clock_settime(clockid_t clk, const struct timespec *tp) { return 0; }
+clock_t times(struct tms *buf) { if (buf) memset(buf, 0, sizeof(*buf)); return 0; }
+
+// =====================================================================
 // User/group
+// =====================================================================
+
 int getgrouplist(const char *user, gid_t group, gid_t *groups, int *ngroups) {
-    (void)user;
     if (groups && ngroups && *ngroups > 0) { groups[0] = group; *ngroups = 1; }
     return 1;
 }
 
+// setgroups provided by yos-generated.c
+int initgroups(const char *user, gid_t group) { return 0; }
+int setreuid(uid_t r, uid_t e) { return 0; }
+int setregid(gid_t r, gid_t e) { return 0; }
+int seteuid(uid_t u) { return 0; }
+int setegid(gid_t g) { return 0; }
+int setresuid(uid_t r, uid_t e, uid_t s) { return 0; }
+int setresgid(gid_t r, gid_t e, gid_t s) { return 0; }
+int getresuid(uid_t *r, uid_t *e, uid_t *s) { if(r)*r=0; if(e)*e=0; if(s)*s=0; return 0; }
+int getresgid(gid_t *r, gid_t *e, gid_t *s) { if(r)*r=0; if(e)*e=0; if(s)*s=0; return 0; }
+
+// =====================================================================
 // Device numbers
-unsigned int major(unsigned long dev) { return (dev >> 8) & 0xff; }
-unsigned int minor(unsigned long dev) { return dev & 0xff; }
+// =====================================================================
+
+unsigned int gnu_dev_major(unsigned long dev) { return (dev >> 8) & 0xff; }
+unsigned int gnu_dev_minor(unsigned long dev) { return dev & 0xff; }
+unsigned long gnu_dev_makedev(unsigned int maj, unsigned int min) { return ((maj & 0xff) << 8) | (min & 0xff); }
+#define major(dev) gnu_dev_major(dev)
+#define minor(dev) gnu_dev_minor(dev)
+#define makedev(maj, min) gnu_dev_makedev(maj, min)
+
+// =====================================================================
+// Rusage
+// =====================================================================
+
+// getrusage provided by yos-generated.c
+
+// =====================================================================
+// Priority
+// =====================================================================
+
+int getpriority(int which, int who) { return 0; }
+int setpriority(int which, int who, int prio) { return 0; }
+
+// =====================================================================
+// Hostname
+// =====================================================================
+
+static char _hostname[256] = "wasm";
+int sethostname(const char *name, size_t len) {
+    if (!name || len >= sizeof(_hostname)) { errno = EINVAL; return -1; }
+    memcpy(_hostname, name, len);
+    _hostname[len] = 0;
+    return 0;
+}
+
+// =====================================================================
+// Mktemp
+// =====================================================================
+
+static unsigned int _rand_seed = 12345;
+static unsigned int _simple_rand(void) {
+    _rand_seed = _rand_seed * 1103515245 + 12345;
+    return (_rand_seed >> 16) & 0x7fff;
+}
+
+char *mktemp(char *tmpl) {
+    if (!tmpl) { errno = EINVAL; return tmpl; }
+    size_t len = strlen(tmpl);
+    if (len < 6) { errno = EINVAL; return tmpl; }
+    char *p = tmpl + len - 6;
+    for (int i = 0; i < 6; i++) {
+        if (p[i] != 'X') { errno = EINVAL; return tmpl; }
+    }
+    static const char chars[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    for (int i = 0; i < 6; i++) {
+        p[i] = chars[_simple_rand() % (sizeof(chars) - 1)];
+    }
+    return tmpl;
+}
+
+char *mkdtemp(char *tmpl) {
+    mktemp(tmpl);
+    if (mkdir(tmpl, 0700) < 0) return 0;
+    return tmpl;
+}
+
+int mkstemp(char *tmpl) {
+    mktemp(tmpl);
+    return open(tmpl, O_RDWR | O_CREAT | O_EXCL, 0600);
+}
+
+// =====================================================================
+// Sched
+// =====================================================================
+
+int sched_getaffinity(pid_t pid, size_t cpusetsize, cpu_set_t *mask) {
+    if (mask && cpusetsize >= sizeof(cpu_set_t)) {
+        memset(mask, 0, sizeof(cpu_set_t));
+        CPU_SET(0, mask);
+    }
+    return 0;
+}
+
+int sched_setaffinity(pid_t pid, size_t cpusetsize, const cpu_set_t *mask) { return 0; }
+
+// =====================================================================
+// Sysinfo
+// =====================================================================
+
+// sysinfo provided by yos-generated.c
+
+// =====================================================================
+// Select
+// =====================================================================
+
+int select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timeval *timeout) {
+    if (readfds) FD_ZERO(readfds);
+    if (writefds) FD_ZERO(writefds);
+    if (exceptfds) FD_ZERO(exceptfds);
+    return 0;
+}
+
+int pselect(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, const struct timespec *timeout, const sigset_t *sigmask) {
+    return select(nfds, readfds, writefds, exceptfds, 0);
+}
+
+int __ppoll_time64(struct pollfd *fds, nfds_t nfds, const struct timespec *tmo_p, const sigset_t *sigmask) {
+    for (nfds_t i = 0; i < nfds; i++) {
+        fds[i].revents = fds[i].events & (POLLIN | POLLOUT);
+    }
+    return (int)nfds;
+}
+
+// =====================================================================
+// Glob / fnmatch
+// =====================================================================
+
+int fnmatch(const char *pattern, const char *string, int flags) {
+    // Simple implementation - just check if equal for now
+    return strcmp(pattern, string) == 0 ? 0 : 1;
+}
+
+// =====================================================================
+// Assert
+// =====================================================================
+
+void __assert_fail(const char *expr, const char *file, unsigned int line, const char *func) {
+    __builtin_trap();
+}
+
+// =====================================================================
+// Regex - minimal stubs
+// =====================================================================
+
+int regcomp(regex_t *preg, const char *regex, int cflags) { return 0; }
+int regexec(const regex_t *preg, const char *string, size_t nmatch, regmatch_t pmatch[], int eflags) { return 1; }
+size_t regerror(int errcode, const regex_t *preg, char *errbuf, size_t errbuf_size) { if (errbuf && errbuf_size) errbuf[0] = 0; return 0; }
+void regfree(regex_t *preg) {}
+
+// =====================================================================
+// Locale - minimal stubs
+// =====================================================================
+
+char *setlocale(int category, const char *locale) { return (char*)"C"; }
+struct lconv *localeconv(void) { static struct lconv lc = {0}; return &lc; }
+
+// =====================================================================
+// Getopt - minimal implementation
+// =====================================================================
+
+char *optarg = 0;
+int optind = 1;
+int opterr = 1;
+int optopt = '?';
+
+int getopt(int argc, char * const argv[], const char *optstring) {
+    static int optpos = 1;
+
+    if (optind >= argc || argv[optind] == 0 || argv[optind][0] != '-' || argv[optind][1] == 0) {
+        return -1;
+    }
+    if (argv[optind][1] == '-' && argv[optind][2] == 0) {
+        optind++;
+        return -1;
+    }
+
+    int c = argv[optind][optpos];
+    const char *p = strchr(optstring, c);
+
+    if (!p || c == ':') {
+        optopt = c;
+        if (optstring[0] != ':') {
+            // Error message would go here
+        }
+        if (argv[optind][++optpos] == 0) {
+            optind++;
+            optpos = 1;
+        }
+        return '?';
+    }
+
+    if (p[1] == ':') {
+        if (argv[optind][optpos + 1]) {
+            optarg = &argv[optind][optpos + 1];
+            optind++;
+            optpos = 1;
+        } else if (optind + 1 < argc) {
+            optarg = argv[++optind];
+            optind++;
+            optpos = 1;
+        } else {
+            optopt = c;
+            if (optstring[0] == ':') return ':';
+            return '?';
+        }
+    } else {
+        if (argv[optind][++optpos] == 0) {
+            optind++;
+            optpos = 1;
+        }
+        optarg = 0;
+    }
+
+    return c;
+}
+
+int getopt_long(int argc, char * const argv[], const char *optstring,
+                const struct option *longopts, int *longindex) {
+    return getopt(argc, argv, optstring);
+}
+
+int getopt_long_only(int argc, char * const argv[], const char *optstring,
+                     const struct option *longopts, int *longindex) {
+    return getopt(argc, argv, optstring);
+}
+
+// =====================================================================
+// strchrnul - GNU extension
+// =====================================================================
+
+char *strchrnul(const char *s, int c) {
+    while (*s && *s != c) s++;
+    return (char*)s;
+}
+
+// All C library functions are now provided by yos-generated.c
+// via passthrough to native libc

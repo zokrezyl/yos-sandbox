@@ -23,15 +23,4 @@ m3ApiRawFunction(syscall_read);
 m3ApiRawFunction(syscall_exec);
 m3ApiRawFunction(syscall_spawn); // fork+exec in one call
 
-// WASI syscalls (minimal set for wasi-libc stdio)
-m3ApiRawFunction(wasi_stub_enosys);
-m3ApiRawFunction(wasi_fd_fdstat_get);
-m3ApiRawFunction(wasi_fd_close);
-m3ApiRawFunction(wasi_fd_seek);
-m3ApiRawFunction(wasi_fd_write);
-m3ApiRawFunction(wasi_fd_read);
-m3ApiRawFunction(wasi_args_sizes_get);
-m3ApiRawFunction(wasi_args_get);
-m3ApiRawFunction(wasi_proc_exit);
-
 } // namespace yos

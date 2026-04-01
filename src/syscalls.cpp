@@ -2,13 +2,19 @@
 #include "runtime.hpp"
 
 #include <cstdio>
-#include <cstring>
+#include <string>
 #include <unistd.h>
+#include <vector>
 
 namespace yos {
 
 static ProcessContext* getCtx(IM3Runtime rt) {
     return static_cast<ProcessContext*>(m3_GetUserData(rt));
+}
+
+// Used by generated handlers
+ProcessContext* getProcessContext(IM3Runtime rt) {
+    return getCtx(rt);
 }
 
 // yos_fork() -> i32
@@ -264,148 +270,6 @@ m3ApiRawFunction(syscall_spawn) {
     auto* ctx = getCtx(runtime);
     Pid childPid = ctx->runtime->spawnProcess(ctx->process->pid, std::string(path), std::move(argv));
     m3ApiReturn(childPid);
-}
-
-// ---- WASI syscalls ----
-
-// Generic stub returning ENOSYS for unimplemented WASI functions
-m3ApiRawFunction(wasi_stub_enosys) {
-    m3ApiReturnType(int32_t);
-    m3ApiReturn(76); // __WASI_ERRNO_NOSYS
-}
-
-// fd_fdstat_get(fd: i32, fdstat_ptr: i32) -> errno
-m3ApiRawFunction(wasi_fd_fdstat_get) {
-    m3ApiReturnType(int32_t);
-    m3ApiGetArg(int32_t, fd);
-    m3ApiGetArgMem(uint8_t*, fdstat);
-
-    // fdstat struct: filetype(u8) + pad(1) + flags(u16) + pad(4) + rights_base(u64) + rights_inheriting(u64) = 24 bytes
-    m3ApiCheckMem(fdstat, 24);
-    memset(fdstat, 0, 24);
-
-    if (fd <= 2) {
-        fdstat[0] = 2; // FILETYPE_CHARACTER_DEVICE
-        // Set all rights
-        uint64_t rights = ~0ULL;
-        memcpy(fdstat + 8, &rights, 8);
-        memcpy(fdstat + 16, &rights, 8);
-    }
-    m3ApiReturn(0);
-}
-
-// fd_close(fd: i32) -> errno
-m3ApiRawFunction(wasi_fd_close) {
-    m3ApiReturnType(int32_t);
-    m3ApiGetArg(int32_t, fd);
-    // Don't actually close stdin/stdout/stderr
-    if (fd <= 2) { m3ApiReturn(0); }
-    m3ApiReturn(0);
-}
-
-// fd_seek(fd: i32, offset: i64, whence: i32, newoffset_ptr: i32) -> errno
-m3ApiRawFunction(wasi_fd_seek) {
-    m3ApiReturnType(int32_t);
-    m3ApiGetArg(int32_t, fd);
-    m3ApiGetArg(int64_t, offset);
-    m3ApiGetArg(int32_t, whence);
-    m3ApiGetArgMem(uint64_t*, newoffsetPtr);
-    // Not supported for now
-    m3ApiReturn(8); // EBADF
-}
-
-// WASI fd_write: (fd, iovs_ptr, iovs_len, nwritten_ptr) -> errno
-// iovs is array of {buf_ptr: i32, buf_len: i32}
-m3ApiRawFunction(wasi_fd_write) {
-    m3ApiReturnType(int32_t);
-    m3ApiGetArg(int32_t, fd);
-    m3ApiGetArgMem(uint32_t*, iovs);
-    m3ApiGetArg(int32_t, iovsLen);
-    m3ApiGetArgMem(uint32_t*, nwrittenPtr);
-
-    auto* ctx = getCtx(runtime);
-    FILE* stream = (fd == 2) ? stderr : stdout;
-    uint32_t totalWritten = 0;
-
-    for (int32_t i = 0; i < iovsLen; i++) {
-        uint32_t bufOffset = iovs[i * 2];
-        uint32_t bufLen = iovs[i * 2 + 1];
-        const uint8_t* buf = (const uint8_t*)_mem + bufOffset;
-
-        // Write with pid prefix per line
-        const uint8_t* p = buf;
-        const uint8_t* end = buf + bufLen;
-        while (p < end) {
-            const uint8_t* nl = p;
-            while (nl < end && *nl != '\n') nl++;
-            bool hasNewline = (nl < end);
-            fprintf(stream, "[pid %d] %.*s%s",
-                    ctx->process->pid,
-                    (int)(nl - p), p,
-                    hasNewline ? "\n" : "");
-            p = hasNewline ? nl + 1 : end;
-        }
-        totalWritten += bufLen;
-    }
-    fflush(stream);
-
-    *nwrittenPtr = totalWritten;
-    m3ApiReturn(0);
-}
-
-// WASI fd_read: (fd, iovs_ptr, iovs_len, nread_ptr) -> errno
-m3ApiRawFunction(wasi_fd_read) {
-    m3ApiReturnType(int32_t);
-    m3ApiGetArg(int32_t, fd);
-    m3ApiGetArgMem(uint32_t*, iovs);
-    m3ApiGetArg(int32_t, iovsLen);
-    m3ApiGetArgMem(uint32_t*, nreadPtr);
-
-    uint32_t totalRead = 0;
-
-    for (int32_t i = 0; i < iovsLen; i++) {
-        uint32_t bufOffset = iovs[i * 2];
-        uint32_t bufLen = iovs[i * 2 + 1];
-        uint8_t* buf = (uint8_t*)_mem + bufOffset;
-
-        int hostFd = (fd == 0) ? STDIN_FILENO : fd;
-        ssize_t n = ::read(hostFd, buf, bufLen);
-        if (n > 0) totalRead += n;
-        if (n < (ssize_t)bufLen) break; // short read
-    }
-
-    *nreadPtr = totalRead;
-    m3ApiReturn(0);
-}
-
-// args_sizes_get(argc_ptr, argv_buf_size_ptr) -> errno
-m3ApiRawFunction(wasi_args_sizes_get) {
-    m3ApiReturnType(int32_t);
-    m3ApiGetArgMem(uint32_t*, argcPtr);
-    m3ApiGetArgMem(uint32_t*, bufSizePtr);
-    // TODO: pass real args from process context
-    *argcPtr = 1;
-    *bufSizePtr = 8; // "busybox\0"
-    m3ApiReturn(0);
-}
-
-// args_get(argv_ptr, argv_buf_ptr) -> errno
-m3ApiRawFunction(wasi_args_get) {
-    m3ApiReturnType(int32_t);
-    m3ApiGetArgMem(uint32_t*, argvPtr);
-    m3ApiGetArgMem(char*, argvBuf);
-    // TODO: pass real args
-    memcpy(argvBuf, "busybox", 8);
-    argvPtr[0] = m3ApiPtrToOffset(argvBuf);
-    m3ApiReturn(0);
-}
-
-// proc_exit(code: i32) -> noreturn
-m3ApiRawFunction(wasi_proc_exit) {
-    m3ApiGetArg(int32_t, code);
-    auto* ctx = getCtx(runtime);
-    ctx->runtime->processTable().exit(ctx->process->pid, code);
-    m3ApiTrap("yos_exit");
 }
 
 } // namespace yos

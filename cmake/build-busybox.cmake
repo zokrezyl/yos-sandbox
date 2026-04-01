@@ -15,8 +15,8 @@ endif()
 
 # Get absolute paths
 get_filename_component(WASI_CC_ABS ${WASI_CC} ABSOLUTE)
-get_filename_component(WASI_SYSROOT_ABS ${WASI_SYSROOT} ABSOLUTE)
 get_filename_component(YOS_SRC_ABS ${YOS_SOURCE_DIR} ABSOLUTE)
+get_filename_component(CODEGEN_DIR ${CODEGEN_DIR} ABSOLUTE)
 
 # Generate CC wrapper from template (handles both compiling and linking)
 configure_file("${YOS_SRC_ABS}/cmake/wasm-cc.sh.in" "${BB_BUILD}/wasm-cc" @ONLY)
@@ -33,6 +33,18 @@ if(NOT rc EQUAL 0)
     message(FATAL_ERROR "Failed to compile yos-stubs.c:\n${err}")
 endif()
 
+# Compile yos-generated.o (includes variadic function wrappers) (directly with clang, not through wasm-cc wrapper to avoid wasm-compat.h conflict)
+message(STATUS "Compiling yos-generated.o...")
+execute_process(
+    COMMAND ${WASI_CC_ABS} --target=wasm32 -nostdlib -c
+        ${CODEGEN_DIR}/wasm-stubs/yos-generated.c -o ${BB_BUILD}/yos-generated.o
+    RESULT_VARIABLE rc
+    ERROR_VARIABLE err
+)
+if(NOT rc EQUAL 0)
+    message(FATAL_ERROR "Failed to compile yos-generated.c:\n${err}")
+endif()
+
 # Step 1: allnoconfig
 message(STATUS "Configuring busybox (allnoconfig)...")
 execute_process(
@@ -41,16 +53,124 @@ execute_process(
 )
 
 # Step 2: enable applets incrementally
-# Start with the simplest, expand as we fix compilation
+# Busybox applets to enable
 set(BB_ENABLES
-    # Minimal set for testing
+    # Core utilities
     "CONFIG_ECHO=y"
     "CONFIG_TRUE=y"
     "CONFIG_FALSE=y"
     "CONFIG_CAT=y"
     "CONFIG_LS=y"
     "CONFIG_PWD=y"
-    # CONFIG_UPTIME needs __linux__ for sysinfo()
+    "CONFIG_TEST=y"
+    "CONFIG_TEST1=y"
+    "CONFIG_TEST2=y"
+    "CONFIG_PRINTF=y"
+    "CONFIG_YES=y"
+    "CONFIG_SEQ=y"
+    "CONFIG_SLEEP=y"
+    "CONFIG_USLEEP=y"
+
+    # File operations
+    "CONFIG_CP=y"
+    "CONFIG_MV=y"
+    "CONFIG_RM=y"
+    "CONFIG_MKDIR=y"
+    "CONFIG_RMDIR=y"
+    "CONFIG_TOUCH=y"
+    "CONFIG_LN=y"
+    "CONFIG_CHMOD=y"
+    "CONFIG_CHOWN=y"
+    "CONFIG_STAT=y"
+    "CONFIG_READLINK=y"
+    "CONFIG_REALPATH=y"
+    "CONFIG_BASENAME=y"
+    "CONFIG_DIRNAME=y"
+    # CONFIG_MKTEMP needs mktemp/mkdtemp
+
+    # Text processing
+    "CONFIG_GREP=y"
+    "CONFIG_EGREP=y"
+    "CONFIG_FGREP=y"
+    "CONFIG_SED=y"
+    "CONFIG_AWK=y"
+    "CONFIG_HEAD=y"
+    "CONFIG_TAIL=y"
+    "CONFIG_WC=y"
+    "CONFIG_SORT=y"
+    "CONFIG_UNIQ=y"
+    "CONFIG_CUT=y"
+    "CONFIG_TR=y"
+    "CONFIG_TEE=y"
+    "CONFIG_XARGS=y"
+    "CONFIG_DIFF=y"
+    "CONFIG_CMP=y"
+    "CONFIG_COMM=y"
+    "CONFIG_FOLD=y"
+    "CONFIG_PASTE=y"
+    "CONFIG_EXPAND=y"
+    "CONFIG_UNEXPAND=y"
+    "CONFIG_NL=y"
+    "CONFIG_OD=y"
+    "CONFIG_HEXDUMP=y"
+    "CONFIG_XXD=y"
+    "CONFIG_BASE64=y"
+    "CONFIG_MD5SUM=y"
+    "CONFIG_SHA1SUM=y"
+    "CONFIG_SHA256SUM=y"
+    "CONFIG_SHA512SUM=y"
+
+    # System info
+    "CONFIG_DATE=y"
+    "CONFIG_UNAME=y"
+    # CONFIG_HOSTNAME needs sethostname
+    "CONFIG_WHOAMI=y"
+    "CONFIG_ID=y"
+    "CONFIG_GROUPS=y"
+    "CONFIG_ENV=y"
+    "CONFIG_PRINTENV=y"
+    "CONFIG_EXPR=y"
+    # CONFIG_NPROC needs sched_getaffinity
+
+    # Process management - uses /proc filesystem
+    "CONFIG_PS=y"
+    "CONFIG_FEATURE_PS_LONG=y"
+    "CONFIG_FEATURE_PS_WIDE=y"
+    "CONFIG_KILL=y"
+    "CONFIG_KILLALL=y"
+    "CONFIG_PGREP=y"
+    "CONFIG_PKILL=y"
+    "CONFIG_PIDOF=y"
+    "CONFIG_PSTREE=y"
+    "CONFIG_UPTIME=y"
+
+    # File finding
+    "CONFIG_FIND=y"
+    "CONFIG_WHICH=y"
+    "CONFIG_WHEREIS=y"
+
+    # Archive - TAR needs makedev
+    # "CONFIG_TAR=y"
+    "CONFIG_GZIP=y"
+    "CONFIG_GUNZIP=y"
+    "CONFIG_ZCAT=y"
+    "CONFIG_BZIP2=y"
+    "CONFIG_BUNZIP2=y"
+    "CONFIG_BZCAT=y"
+    "CONFIG_UNZIP=y"
+
+    # Misc
+    "CONFIG_CLEAR=y"
+    "CONFIG_RESET=y"
+    # CONFIG_TIME needs rusage
+    "CONFIG_TIMEOUT=y"
+    "CONFIG_NOHUP=y"
+    # CONFIG_NICE needs PRIO_PROCESS
+    # CONFIG_WATCH needs select/poll
+    "CONFIG_STRINGS=y"
+    "CONFIG_DD=y"
+    "CONFIG_SPLIT=y"
+    "CONFIG_INSTALL=y"
     # Shell
     "CONFIG_ASH=y"
     "CONFIG_ASH_ALIAS=y"
@@ -113,6 +233,25 @@ foreach(f ${X86_ASM})
     file(REMOVE ${f})
 endforeach()
 
+# Create stub libraries (libm, libpthread, etc.) - empty archives
+# wasm-ld needs these to exist even if empty
+set(STUB_LIB_DIR "${BB_BUILD}/stub-libs")
+file(MAKE_DIRECTORY ${STUB_LIB_DIR})
+
+# Create empty .o file for stub libs
+file(WRITE "${STUB_LIB_DIR}/stub.c" "/* empty stub */\n")
+execute_process(
+    COMMAND ${WASI_CC_ABS} --target=wasm32 -nostdlib -c
+        ${STUB_LIB_DIR}/stub.c -o ${STUB_LIB_DIR}/stub.o
+)
+
+# Create stub libraries
+foreach(LIB m pthread dl rt crypt resolv)
+    execute_process(
+        COMMAND ${CMAKE_COMMAND} -E env ar rcs ${STUB_LIB_DIR}/lib${LIB}.a ${STUB_LIB_DIR}/stub.o
+    )
+endforeach()
+
 # BB_VER comes from Makefile, passed as -D. Check it's in autoconf.h
 # AUTOCONF_TIMESTAMP is in autoconf.h, no patching needed.
 
@@ -132,6 +271,18 @@ execute_process(
 if(rc EQUAL 0)
     file(COPY "${BB_BUILD}/busybox_unstripped" DESTINATION ${OUTPUT_DIR})
     file(RENAME "${OUTPUT_DIR_ABS}/busybox_unstripped" "${OUTPUT_DIR_ABS}/busybox.wasm")
+    # Normalize LEB encodings with wasm-opt (wasm3 chokes on non-canonical encodings)
+    find_program(WASM_OPT wasm-opt)
+    if(WASM_OPT)
+        message(STATUS "Optimizing with wasm-opt...")
+        execute_process(
+            COMMAND ${WASM_OPT} -O1 "${OUTPUT_DIR_ABS}/busybox.wasm" -o "${OUTPUT_DIR_ABS}/busybox.wasm"
+            RESULT_VARIABLE opt_rc
+        )
+        if(NOT opt_rc EQUAL 0)
+            message(WARNING "wasm-opt failed, using unoptimized binary")
+        endif()
+    endif()
     execute_process(COMMAND ls -lh "${OUTPUT_DIR_ABS}/busybox.wasm" OUTPUT_VARIABLE sz)
     message(STATUS "SUCCESS: ${sz}")
 else()

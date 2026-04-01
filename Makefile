@@ -22,4 +22,5 @@ busybox:
 		-DBUSYBOX_SOURCE_DIR=$(BUILD_DIR)/_deps/busybox-src \
 		-DYOS_SOURCE_DIR=$(CURDIR) \
 		-DOUTPUT_DIR=$(BUILD_DIR)/wasm \
+		-DCODEGEN_DIR=$(BUILD_DIR)/generated \
 		-P cmake/build-busybox.cmake

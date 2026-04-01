@@ -67,6 +67,15 @@ public:
     // Wait for child to exit, returns exit code. -1 if no such child.
     int32_t wait(Pid parentPid, Pid childPid);
 
+    // Get list of all processes (for ps command)
+    struct ProcInfo {
+        Pid pid;
+        Pid ppid;
+        Pid pgid;
+        ProcessState state;
+    };
+    std::vector<ProcInfo> listProcesses();
+
     Pid nextPid();
 
 private:

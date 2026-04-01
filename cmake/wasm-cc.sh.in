@@ -1,5 +1,7 @@
 #!/bin/bash
-# Filter out flags wasm-ld doesn't support and detect link mode
+# Compile busybox for wasm32 WITHOUT wasi-libc
+# Uses only our generated YOS stubs
+
 ARGS=()
 IS_COMPILE=0
 IS_RELOCATABLE=0
@@ -14,16 +16,17 @@ for arg in "$@"; do
     esac
 done
 
-# Add yos-stubs.o only for final linking (not compile-only or relocatable)
-YOS_STUBS=""
+# Add stubs only for final linking (not compile-only or relocatable)
+LINK_OBJS=""
 if [ "$IS_COMPILE" = "0" ] && [ "$IS_RELOCATABLE" = "0" ]; then
-    YOS_STUBS="@BB_BUILD@/yos-stubs.o"
+    LINK_OBJS="@BB_BUILD@/yos-stubs.o @BB_BUILD@/yos-generated.o"
 fi
 
-exec @WASI_CC_ABS@ --target=wasm32-wasip1 --sysroot=@WASI_SYSROOT_ABS@ \
-    -D_WASI_EMULATED_SIGNAL \
-    -D_WASI_EMULATED_PROCESS_CLOCKS \
+exec @WASI_CC_ABS@ --target=wasm32 \
+    -nostdlib \
     -I@YOS_SRC_ABS@/wasm-stubs \
+    -I@CODEGEN_DIR@/wasm-stubs \
+    -L@BB_BUILD@/stub-libs \
     -include @YOS_SRC_ABS@/wasm-stubs/wasm-compat.h \
     -Wno-int-conversion \
     -Wno-incompatible-pointer-types \
@@ -37,7 +40,11 @@ exec @WASI_CC_ABS@ --target=wasm32-wasip1 --sysroot=@WASI_SYSROOT_ABS@ \
     -Wno-unused-but-set-variable \
     -DOFF_T_MAX=9223372036854775807LL \
     -Wno-unknown-warning-option \
-    -Wl,--no-gc-sections \
+    -Wl,--no-entry \
+    -Wl,--export=_start \
+    -Wl,--export=main \
+    -Wl,--export-all \
+    -Wl,--whole-archive \
+    -Wl,--allow-undefined \
     "${ARGS[@]}" \
-    $YOS_STUBS \
-    -lwasi-emulated-process-clocks
+    $LINK_OBJS

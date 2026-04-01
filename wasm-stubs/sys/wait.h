@@ -1,2 +1,3 @@
+// sys/wait.h - stub for wasm32
 #pragma once
-#include "wasm-compat.h"
+#include "../wasm-compat.h"
