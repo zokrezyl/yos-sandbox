@@ -497,14 +497,14 @@ misc:
   - name: brk
     params: [{addr: ptr}]
     returns: i32
-    handler: stub
-    value: 0
+    handler: runtime
+    method: brk(addr)
 
   - name: sbrk
     params: [{increment: i64}]
     returns: ptr
-    handler: stub
-    value: 0
+    handler: runtime
+    method: sbrk(increment)
 
 # =============================================================================
 # Memory Functions - wasm-side implementations

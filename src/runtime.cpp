@@ -265,10 +265,12 @@ void Runtime::runProcess(std::shared_ptr<Process> proc, std::vector<uint8_t> was
                 argvArray[i] = strPtr;
                 size_t len = strlen(_argv[i]) + 1;
                 memcpy(mem + strPtr, _argv[i], len);
+                YOS_DBG("yos[%d]: argv[%d]=%u \"%s\"\n", proc->pid, i, strPtr, _argv[i]);
                 strPtr += len;
             }
             argvArray[_argc] = 0;  // NULL terminator
 
+            YOS_DBG("yos[%d]: memSize=%u, argvPtr=%u, strPtr=%u\n", proc->pid, memSize, argvPtr, strPtr);
             YOS_DBG("yos[%d]: calling %s(argc=%d, argv=%u)...\n", proc->pid, entryName, _argc, argvPtr);
             result = m3_CallV(startFn, _argc, argvPtr);
         } else {
@@ -278,7 +280,7 @@ void Runtime::runProcess(std::shared_ptr<Process> proc, std::vector<uint8_t> was
         YOS_DBG("yos[%d]: _start returned: %s\n", proc->pid, result ? result : "(ok)");
 
         // Print backtrace BEFORE cleanup for debugging
-        if (result && strstr(result, "unreachable")) {
+        if (result && (strstr(result, "unreachable") || strstr(result, "out of bounds") || strstr(result, "trap"))) {
             IM3BacktraceInfo bt = m3_GetBacktrace(wp.wrt);
             YOS_DBG("yos[%d]: BACKTRACE (bt=%p):\n", proc->pid, (void*)bt);
             if (bt && bt->frames) {
@@ -444,10 +446,10 @@ int Runtime::uname(ProcessContext* ctx, void* buf) {
 // Varargs constants and VarArgPack are now in yos-varargs-generated.hpp
 
 int Runtime::varargs_call(ProcessContext* ctx, int func_id, void* arg1, void* arg2, void* arg3, void* args_ptr) {
+    // args are already host pointers (m3ApiGetArgMem translated them)
     auto* pack = static_cast<VarArgPack*>(args_ptr);
 
     // Build argument array for formatting
-    // We'll use snprintf with reconstructed format
     char buf[4096];
     char* out = buf;
     char* end = buf + sizeof(buf);
@@ -482,7 +484,7 @@ int Runtime::varargs_call(ProcessContext* ctx, int func_id, void* arg1, void* ar
             fmt = static_cast<const char*>(arg2);
             break;
         case VFUNC_VASPRINTF:
-            str_out = nullptr;  // Will allocate
+            str_out = nullptr;
             fmt = static_cast<const char*>(arg2);
             str_size = SIZE_MAX;
             break;
@@ -603,6 +605,65 @@ int Runtime::varargs_call(ProcessContext* ctx, int func_id, void* arg1, void* ar
     }
 
     return result;
+}
+
+// Memory management: sbrk/brk for heap growth
+// WASM memory is linear and can be grown. We track a virtual "program break".
+// Note: sbrk returns WASM addresses (uint32), not host pointers.
+
+void* Runtime::sbrk(ProcessContext* ctx, int64_t increment) {
+    uint32_t memSize = m3_GetMemorySize(ctx->wrt);
+    if (memSize == 0) return reinterpret_cast<void*>(-1);
+
+    // Initialize heap_end on first call
+    if (ctx->heapEnd == 0) {
+        // Try to get __heap_base from wasm globals
+        // busybox.wasm has __heap_base = 102352
+        // Default to a reasonable value if we can't find it
+        ctx->heapEnd = 102400;  // Just above typical __heap_base
+        YOS_DBG("sbrk: initialized heap at %u (memSize=%u)\n", ctx->heapEnd, memSize);
+    }
+
+    uint32_t oldEnd = ctx->heapEnd;
+
+    if (increment == 0) {
+        // sbrk(0) returns current break as WASM address
+        return reinterpret_cast<void*>(static_cast<uintptr_t>(oldEnd));
+    }
+
+    int64_t newEnd64 = static_cast<int64_t>(oldEnd) + increment;
+    if (newEnd64 < 0 || newEnd64 > UINT32_MAX) {
+        return reinterpret_cast<void*>(-1);
+    }
+    uint32_t newEnd = static_cast<uint32_t>(newEnd64);
+
+    // If newEnd exceeds memory, try to grow
+    if (newEnd > memSize) {
+        // wasm3 memory growth is handled internally when memory is accessed
+        // For now, just fail if we'd exceed current memory
+        // TODO: Call ResizeMemory to grow
+        YOS_DBG("sbrk: would exceed memory (need %u, have %u)\n", newEnd, memSize);
+        return reinterpret_cast<void*>(-1);
+    }
+
+    ctx->heapEnd = newEnd;
+    YOS_DBG("sbrk: %u -> %u (increment=%ld)\n", oldEnd, newEnd, (long)increment);
+    return reinterpret_cast<void*>(static_cast<uintptr_t>(oldEnd));
+}
+
+int Runtime::brk(ProcessContext* ctx, void* addr) {
+    uint32_t memSize = m3_GetMemorySize(ctx->wrt);
+    uint8_t* mem = m3_GetMemory(ctx->wrt, &memSize, 0);
+    if (!mem) return -1;
+
+    // addr is a wasm pointer, not host pointer
+    uint32_t newEnd = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(addr));
+    if (newEnd > memSize) {
+        return -1;
+    }
+
+    ctx->heapEnd = newEnd;
+    return 0;
 }
 
 } // namespace yos

@@ -23,6 +23,9 @@ struct ProcessContext {
     // Set by yos_exec syscall - signals runProcess to reload
     std::string execPath;
     std::vector<std::string> execArgv;
+
+    // Heap management for sbrk
+    uint32_t heapEnd = 0;     // Current program break (0 = uninitialized)
 };
 
 // Per-process WASM runtime context
@@ -75,6 +78,8 @@ public:
     Pid waitpid(ProcessContext* ctx, Pid pid, void* status, int options);
     int uname(ProcessContext* ctx, void* buf);
     int varargs_call(ProcessContext* ctx, int func_id, void* arg1, void* arg2, void* arg3, void* args);
+    void* sbrk(ProcessContext* ctx, int64_t increment);
+    int brk(ProcessContext* ctx, void* addr);
 
 private:
     WasmProcess createWasmProcess(

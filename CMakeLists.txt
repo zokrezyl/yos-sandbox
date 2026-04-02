@@ -24,6 +24,7 @@ if(wasm3_ADDED)
         d_m3HasWASI
         d_m3MaxFunctionStackHeight=4000
         d_m3MaxConstantTableSize=256
+        d_m3RecordBacktraces=1
     )
 endif()
 
