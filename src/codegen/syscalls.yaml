@@ -167,9 +167,8 @@ dir_ops:
 
   - name: getcwd
     params: [{buf: ptr}, {size: u32}]
-    returns: i32
-    handler: vfs
-    method: getcwd((char*)buf, size)
+    returns: ptr
+    handler: extern
 
   - name: getdents
     params: [{fd: i32}, {buf: ptr}, {count: u32}]
@@ -443,7 +442,7 @@ pipe:
 # =============================================================================
 varargs:
   - name: varargs_call
-    params: [{func_id: i32}, {arg1: ptr}, {arg2: ptr}, {arg3: ptr}, {args: ptr}]
+    params: [{func_id: i32}, {arg1: u32}, {arg2: u32}, {arg3: u32}, {args: ptr}]
     returns: i32
     handler: runtime
     method: varargs_call(func_id, arg1, arg2, arg3, args)
@@ -860,8 +859,8 @@ passthrough_stdio:
   - name: fflush
     params: [{stream: ptr}]
     returns: i32
-    handler: passthrough
-    native: fflush((FILE*)stream)
+    handler: stub
+    value: 0
 
   - name: fread
     params: [{ptr: ptr}, {size: u32}, {nmemb: u32}, {stream: ptr}]
@@ -937,10 +936,10 @@ passthrough_string:
     native: strerror(errnum)
 
   - name: stpcpy
-    params: [{dest: ptr}, {src: str}]
+    params: [{dest: ptr}, {src: ptr}]
     returns: ptr
-    handler: passthrough
-    native: stpcpy((char*)dest, src)
+    handler: wasm_impl
+    body: "char*d=(char*)dest;const char*s=(const char*)src;while((*d=*s++))d++;return d;"
 
   - name: stpncpy
     params: [{dest: ptr}, {src: str}, {n: u32}]

@@ -177,6 +177,10 @@ def generate_native_handler(func, namespace):
     if handler == 'wasm_impl':
         return None
 
+    # extern: handler is provided in syscalls.cpp, skip generation
+    if handler == 'extern':
+        return None
+
     lines = [f'm3ApiRawFunction({namespace}_{name}) {{']
 
     if returns != 'void':
@@ -200,9 +204,12 @@ def generate_native_handler(func, namespace):
             lines.append(f'    {native};')
             lines.append('    m3ApiSuccess();')
         elif returns == 'ptr':
-            # Pointer returns: just return the pointer (NULL on error)
+            # Pointer returns: convert host pointer back to WASM address
             lines.append(f'    auto _r = {native};')
-            lines.append('    m3ApiReturn((void*)_r);')
+            lines.append('    if (_r == NULL) m3ApiReturn(0);')
+            lines.append('    uint32_t _msz = 0;')
+            lines.append('    uint8_t* _mbase = m3_GetMemory(runtime, &_msz, 0);')
+            lines.append('    m3ApiReturn((void*)(uintptr_t)((uint8_t*)_r - _mbase));')
         else:
             # Integer returns: check for error via < 0
             lines.append(f'    auto _r = {native};')
@@ -265,6 +272,14 @@ def generate_link_entry(func, namespace):
     sig = f'{ret_sig}({param_sig})'
 
     return f'm3_LinkRawFunction(module, "{namespace}", "{name}", "{sig}", {namespace}_{name});'
+
+def generate_handler(func, namespace):
+    """Generate handler code. Returns None for handlers that are provided externally."""
+    handler = func.get('handler', 'stub')
+    # extern: handler is provided in syscalls.cpp, skip generation
+    if handler == 'extern':
+        return None
+    return generate_m3_handler(func, namespace)
 
 def main():
     if len(sys.argv) < 3:
@@ -448,6 +463,12 @@ struct ProcessContext;
 ProcessContext* getProcessContext(IM3Runtime runtime);
 
 ''']
+    # Add forward declarations for extern handlers
+    for func, ns in all_funcs:
+        if func.get('handler') == 'extern':
+            native.append(f'm3ApiRawFunction({ns}_{func["name"]});')
+    native.append('')
+
     for func, ns in all_funcs:
         handler = generate_native_handler(func, ns)
         if handler:  # None for wasm_impl

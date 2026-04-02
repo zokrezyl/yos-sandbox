@@ -272,4 +272,21 @@ m3ApiRawFunction(syscall_spawn) {
     m3ApiReturn(childPid);
 }
 
+// yos_getcwd(buf: ptr, size: u32) -> ptr (buf on success, 0 on error)
+m3ApiRawFunction(yos_getcwd) {
+    m3ApiReturnType(uint32_t);
+    m3ApiGetArg(uint32_t, bufOffset);
+    m3ApiGetArg(uint32_t, size);
+
+    auto* ctx = getCtx(runtime);
+    char* buf = reinterpret_cast<char*>(static_cast<uint8_t*>(_mem) + bufOffset);
+    int result = ctx->vfs->getcwd(buf, size);
+
+    // POSIX getcwd returns buf on success, NULL on error
+    if (result < 0) {
+        m3ApiReturn(0);
+    }
+    m3ApiReturn(bufOffset);
+}
+
 } // namespace yos

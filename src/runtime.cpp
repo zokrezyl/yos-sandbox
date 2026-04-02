@@ -241,6 +241,16 @@ void Runtime::runProcess(std::shared_ptr<Process> proc, std::vector<uint8_t> was
         bool needsArgv = entryName && (strcmp(entryName, "__main_argc_argv") == 0 ||
                                        strcmp(entryName, "main") == 0);
 
+        // Debug: check heap pointer area
+        {
+            uint32_t dbgMemSize = 0;
+            uint8_t* dbgMem = m3_GetMemory(wp.wrt, &dbgMemSize, 0);
+            if (dbgMem && dbgMemSize >= 102340) {
+                uint32_t heapPtr = *(uint32_t*)(dbgMem + 102336);
+                YOS_DBG("yos[%d]: heap_ptr@102336 = %u (0x%x)\n", proc->pid, heapPtr, heapPtr);
+            }
+        }
+
         if (needsArgv && _argc > 0 && _argv) {
             // Set up argc/argv in WASM memory
             // Layout at end of memory: argv[0..argc], then strings
@@ -265,10 +275,15 @@ void Runtime::runProcess(std::shared_ptr<Process> proc, std::vector<uint8_t> was
                 argvArray[i] = strPtr;
                 size_t len = strlen(_argv[i]) + 1;
                 memcpy(mem + strPtr, _argv[i], len);
-                YOS_DBG("yos[%d]: argv[%d]=%u \"%s\"\n", proc->pid, i, strPtr, _argv[i]);
+                YOS_DBG("yos[%d]: argv[%d]=%u \"%s\" (len=%zu)\n", proc->pid, i, strPtr, _argv[i], len);
+                // Verify the string is in memory
+                YOS_DBG("yos[%d]:   verify: mem[%u]='%c' mem[%u]=0x%02x\n",
+                        proc->pid, strPtr, mem[strPtr], strPtr + len - 1, mem[strPtr + len - 1]);
                 strPtr += len;
             }
             argvArray[_argc] = 0;  // NULL terminator
+            YOS_DBG("yos[%d]: argvArray[0]=%u argvArray[1]=%u argvArray[2]=%u\n",
+                    proc->pid, argvArray[0], argvArray[1], argvArray[2]);
 
             YOS_DBG("yos[%d]: memSize=%u, argvPtr=%u, strPtr=%u\n", proc->pid, memSize, argvPtr, strPtr);
             YOS_DBG("yos[%d]: calling %s(argc=%d, argv=%u)...\n", proc->pid, entryName, _argc, argvPtr);
@@ -445,8 +460,11 @@ int Runtime::uname(ProcessContext* ctx, void* buf) {
 
 // Varargs constants and VarArgPack are now in yos-varargs-generated.hpp
 
-int Runtime::varargs_call(ProcessContext* ctx, int func_id, void* arg1, void* arg2, void* arg3, void* args_ptr) {
-    // args are already host pointers (m3ApiGetArgMem translated them)
+int Runtime::varargs_call(ProcessContext* ctx, int func_id, uint32_t arg1, uint32_t arg2, uint32_t arg3, void* args_ptr) {
+    // args are WASM offsets - convert to host pointers where needed
+    uint32_t memSize = 0;
+    uint8_t* mem = m3_GetMemory(ctx->wrt, &memSize, 0);
+
     auto* pack = static_cast<VarArgPack*>(args_ptr);
 
     // Build argument array for formatting
@@ -460,32 +478,37 @@ int Runtime::varargs_call(ProcessContext* ctx, int func_id, void* arg1, void* ar
     size_t str_size = 0;
     int fd = 1;
 
+    // Helper to convert WASM offset to host pointer
+    auto toPtr = [mem](uint32_t offset) -> char* {
+        return reinterpret_cast<char*>(mem + offset);
+    };
+
     switch (func_id) {
         case VFUNC_PRINTF:
-            fmt = static_cast<const char*>(arg1);
+            fmt = toPtr(arg1);
             stream = stdout;
             break;
         case VFUNC_FPRINTF:
-            stream = static_cast<FILE*>(arg1);
-            fmt = static_cast<const char*>(arg2);
+            stream = reinterpret_cast<FILE*>(mem + arg1); // FILE* is wasm ptr
+            fmt = toPtr(arg2);
             break;
         case VFUNC_SPRINTF:
-            str_out = static_cast<char*>(arg1);
-            fmt = static_cast<const char*>(arg2);
+            str_out = toPtr(arg1);
+            fmt = toPtr(arg2);
             str_size = SIZE_MAX;
             break;
         case VFUNC_SNPRINTF:
-            str_out = static_cast<char*>(arg1);
-            str_size = reinterpret_cast<size_t>(arg2);
-            fmt = static_cast<const char*>(arg3);
+            str_out = toPtr(arg1);
+            str_size = static_cast<size_t>(arg2);  // arg2 is SIZE, not pointer!
+            fmt = toPtr(arg3);
             break;
         case VFUNC_DPRINTF:
-            fd = static_cast<int>(reinterpret_cast<intptr_t>(arg1));
-            fmt = static_cast<const char*>(arg2);
+            fd = static_cast<int>(arg1);  // arg1 is fd, not pointer!
+            fmt = toPtr(arg2);
             break;
         case VFUNC_VASPRINTF:
             str_out = nullptr;
-            fmt = static_cast<const char*>(arg2);
+            fmt = toPtr(arg2);
             str_size = SIZE_MAX;
             break;
         default:
@@ -594,12 +617,10 @@ int Runtime::varargs_call(ProcessContext* ctx, int func_id, void* arg1, void* ar
             result = write(fd, buf, total);
             break;
         case VFUNC_VASPRINTF: {
-            // arg1 is char** strp - allocate and copy
-            char** strp = static_cast<char**>(arg1);
-            if (strp) {
-                *strp = strdup(buf);
-                if (!*strp) result = -1;
-            }
+            // arg1 is WASM offset of char** strp
+            // TODO: Need to allocate in WASM heap, not host heap
+            // For now, just fail
+            result = -1;
             break;
         }
     }

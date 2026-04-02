@@ -77,7 +77,7 @@ public:
     Pid wait(ProcessContext* ctx, void* status);
     Pid waitpid(ProcessContext* ctx, Pid pid, void* status, int options);
     int uname(ProcessContext* ctx, void* buf);
-    int varargs_call(ProcessContext* ctx, int func_id, void* arg1, void* arg2, void* arg3, void* args);
+    int varargs_call(ProcessContext* ctx, int func_id, uint32_t arg1, uint32_t arg2, uint32_t arg3, void* args);
     void* sbrk(ProcessContext* ctx, int64_t increment);
     int brk(ProcessContext* ctx, void* addr);
 
