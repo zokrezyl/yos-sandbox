@@ -226,6 +226,23 @@ m3ApiRawFunction(test_closedir) {
     m3ApiReturn(ret < 0 ? -errno : 0);
 }
 
+m3ApiRawFunction(test_printf) {
+    m3ApiReturnType(int32_t);
+    m3ApiGetArgMem(const char*, fmt);
+    // Simple printf - just output the format string for now
+    int len = printf("%s", fmt);
+    m3ApiReturn(len);
+}
+
+m3ApiRawFunction(test_sprintf) {
+    m3ApiReturnType(int32_t);
+    m3ApiGetArgMem(char*, str);
+    m3ApiGetArgMem(const char*, fmt);
+    // Simple sprintf - just copy format string
+    int len = sprintf(str, "%s", fmt);
+    m3ApiReturn(len);
+}
+
 void linkTestSyscalls(IM3Module module) {
     m3_LinkRawFunction(module, "yos", "write", "i(i*i)", test_write);
     m3_LinkRawFunction(module, "yos", "_exit", "v(i)", test_exit);
@@ -242,6 +259,8 @@ void linkTestSyscalls(IM3Module module) {
     m3_LinkRawFunction(module, "yos", "opendir", "i(*)", test_opendir);
     m3_LinkRawFunction(module, "yos", "readdir", "i(i)", test_readdir);
     m3_LinkRawFunction(module, "yos", "closedir", "i(i)", test_closedir);
+    m3_LinkRawFunction(module, "yos", "printf", "i(*)", test_printf);
+    m3_LinkRawFunction(module, "yos", "sprintf", "i(**)", test_sprintf);
 }
 
 int runTest(const char* wasmPath) {

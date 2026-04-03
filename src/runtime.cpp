@@ -595,10 +595,10 @@ int Runtime::varargs_call(ProcessContext* ctx, int func_id, uint32_t arg1, uint3
                     n = snprintf(out, end - out, spec, (unsigned long)pack->values[arg_idx]);
                     break;
                 case VARG_STR:
-                    n = snprintf(out, end - out, spec, (const char*)pack->values[arg_idx]);
+                    n = snprintf(out, end - out, spec, toPtr(static_cast<uint32_t>(pack->values[arg_idx])));
                     break;
                 case VARG_PTR:
-                    n = snprintf(out, end - out, spec, (void*)pack->values[arg_idx]);
+                    n = snprintf(out, end - out, spec, toPtr(static_cast<uint32_t>(pack->values[arg_idx])));
                     break;
                 case VARG_CHAR:
                     n = snprintf(out, end - out, spec, (int)pack->values[arg_idx]);

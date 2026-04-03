@@ -42,6 +42,7 @@ set(UNIT_TESTS
     test_lstat
     test_opendir
     test_dirent_offsets
+    test_printf
     test_getpid
     test_getdents
     test_getcwd

@@ -179,26 +179,26 @@ dir_ops:
 
   - name: opendir
     params: [{path: str}]
-    returns: ptr
+    returns: handle
     handler: vfs
     method: opendir(path)
 
   # Internal readdir that fills user buffer (WASM version)
   - name: __readdir_r
-    params: [{dir: ptr}, {entry: ptr}]
+    params: [{dir: handle}, {entry: ptr}]
     returns: ptr
     handler: vfs
     method: readdir_wasm(dir, (struct wasm_dirent*)entry)
 
   # POSIX readdir with static buffer
   - name: readdir
-    params: [{dir: ptr}]
+    params: [{dir: handle}]
     returns: ptr
     handler: wasm_impl
     body: "static struct dirent _ent;return __yos___readdir_r(dir,&_ent);"
 
   - name: closedir
-    params: [{dir: ptr}]
+    params: [{dir: handle}]
     returns: i32
     handler: vfs
     method: closedir(dir)

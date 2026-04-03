@@ -29,13 +29,14 @@ WASM_TYPES = {
     'f64': 'double',
     'str': 'const char*',
     'ptr': 'void*',
+    'handle': 'void*',  # opaque handle - NOT converted to memory pointer
     'void': 'void',
 }
 
 M3_SIG = {
     'i32': 'i', 'i64': 'I', 'u32': 'i', 'u64': 'I',
     'f32': 'f', 'f64': 'F',
-    'str': '*', 'ptr': '*', 'void': 'v',
+    'str': '*', 'ptr': '*', 'handle': 'i', 'void': 'v',  # handle uses 'i' (raw int)
 }
 
 def parse_type(t):
@@ -64,8 +65,12 @@ def parse_params(params):
 def m3_getter(ptype, pname):
     base, _ = parse_type(ptype)
     ctype = c_type(ptype)
+    # str/ptr get converted to memory pointers; handle is passed as raw value
     if base in ('str', 'ptr') or base not in WASM_TYPES:
         return f'm3ApiGetArgMem({ctype}, {pname})'
+    # handle type: read as uint32 then cast to void* (NOT memory-converted)
+    if base == 'handle':
+        return f'm3ApiGetArg(uint32_t, _{pname}_raw); void* {pname} = (void*)(uintptr_t)_{pname}_raw'
     return f'm3ApiGetArg({ctype}, {pname})'
 
 # Generate WASM wrapper for variadic function

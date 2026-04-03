@@ -474,12 +474,16 @@ void* VFS::readdir(void* dir, struct dirent* entry) {
 
 void* VFS::readdir_wasm(void* dir, struct wasm_dirent* entry) {
     uintptr_t handle = reinterpret_cast<uintptr_t>(dir);
+    YOS_DBG("  readdir_wasm: handle=%zu\n", handle);
     if (handle == 0 || handle > _dirHandles.size()) return nullptr;
     DIR* d = _dirHandles[handle - 1];
     if (!d) return nullptr;
 
     struct dirent* result = ::readdir(d);
-    if (!result) return nullptr;
+    if (!result) {
+        YOS_DBG("  readdir_wasm: no more entries\n");
+        return nullptr;
+    }
 
     // Convert host dirent to wasm_dirent
     entry->d_ino = static_cast<uint32_t>(result->d_ino);
@@ -489,6 +493,7 @@ void* VFS::readdir_wasm(void* dir, struct wasm_dirent* entry) {
     std::strncpy(entry->d_name, result->d_name, 255);
     entry->d_name[255] = '\0';
     entry->_pad = 0;
+    YOS_DBG("  readdir_wasm: name='%s' type=%d\n", entry->d_name, entry->d_type);
     return entry;
 }
 
