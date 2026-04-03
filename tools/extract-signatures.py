@@ -70,46 +70,97 @@ TYPE_MAP = {
     'const sigset_t *': 'ptr',
 }
 
+def analyze_struct(clang_type):
+    """Analyze struct to determine if singleton (single scalar field) or not.
+    Returns: None if not a struct, or dict with:
+      - 'singleton': True/False
+      - 'field': field name (if singleton)
+      - 'field_type': C type of field (if singleton)
+      - 'size': size in bytes
+    """
+    # Get canonical type to resolve typedefs
+    canon = clang_type.get_canonical()
+
+    if canon.kind != TypeKind.RECORD:
+        return None
+
+    decl = canon.get_declaration()
+    if not decl or decl.kind not in (CursorKind.STRUCT_DECL, CursorKind.UNION_DECL):
+        return None
+
+    # Get all fields
+    fields = []
+    for child in decl.get_children():
+        if child.kind == CursorKind.FIELD_DECL:
+            field_type = child.type.get_canonical()
+            fields.append((child.spelling, child.type.spelling, field_type))
+
+    # Check singleton: exactly one field that is scalar (or singleton struct)
+    if len(fields) == 1:
+        fname, ftype_str, ftype = fields[0]
+        # Check if field is scalar
+        if ftype.kind in (TypeKind.INT, TypeKind.UINT, TypeKind.LONG, TypeKind.ULONG,
+                          TypeKind.LONGLONG, TypeKind.ULONGLONG, TypeKind.SHORT, TypeKind.USHORT,
+                          TypeKind.CHAR_U, TypeKind.CHAR_S, TypeKind.UCHAR, TypeKind.SCHAR,
+                          TypeKind.FLOAT, TypeKind.DOUBLE, TypeKind.POINTER):
+            return {
+                'singleton': True,
+                'field': fname,
+                'field_type': ftype_str,
+                'size': canon.get_size()
+            }
+        # Check if field is itself a singleton struct
+        nested = analyze_struct(ftype)
+        if nested and nested['singleton']:
+            return {
+                'singleton': True,
+                'field': f"{fname}.{nested['field']}",
+                'field_type': nested['field_type'],
+                'size': canon.get_size()
+            }
+
+    # Non-singleton struct
+    return {
+        'singleton': False,
+        'size': canon.get_size()
+    }
+
 def get_yaml_type(clang_type):
-    """Convert clang type to YAML type"""
+    """Get type info - returns (yaml_type, c_type) tuple"""
     type_str = clang_type.spelling
 
-    # Direct match
-    if type_str in TYPE_MAP:
-        return TYPE_MAP[type_str]
+    # Clean up type string
+    c_type = type_str.replace('__restrict', '').replace('restrict', '').strip()
+    c_type = ' '.join(c_type.split())  # normalize whitespace
 
-    # Handle restrict qualifier
+    # Determine yaml type for m3 signature
+    if type_str in TYPE_MAP:
+        return TYPE_MAP[type_str], c_type
+
     type_str_clean = type_str.replace('restrict ', '').replace('__restrict ', '').strip()
     if type_str_clean in TYPE_MAP:
-        return TYPE_MAP[type_str_clean]
+        return TYPE_MAP[type_str_clean], c_type
 
     # Pointer types
     if clang_type.kind == TypeKind.POINTER:
         pointee = clang_type.get_pointee()
         pointee_str = pointee.spelling
 
-        # Check for char pointer (string)
         if 'char' in pointee_str and 'unsigned' not in pointee_str:
-            return 'str'
-        # Check for void pointer
+            return 'str', c_type
         if pointee_str == 'void' or pointee_str == 'const void':
-            return 'ptr'
-        # Check for FILE/DIR
+            return 'ptr', c_type
         if 'FILE' in pointee_str or 'DIR' in pointee_str:
-            return 'handle'
-        # Default pointer
-        return 'ptr'
+            return 'handle', c_type
+        return 'ptr', c_type
 
-    # Function pointer
     if clang_type.kind == TypeKind.FUNCTIONPROTO or '(*)' in type_str:
-        return 'ptr'
+        return 'ptr', c_type
 
-    # Array decays to pointer
     if clang_type.kind == TypeKind.INCOMPLETEARRAY or clang_type.kind == TypeKind.CONSTANTARRAY:
-        return 'ptr'
+        return 'ptr', c_type
 
-    # Default to i32 for unknown types
-    return 'i32'
+    return 'i32', c_type
 
 def extract_all_functions(headers):
     """Extract ALL function signatures from headers"""
@@ -156,10 +207,14 @@ def extract_all_functions(headers):
                 params = []
                 for arg in cursor.get_arguments():
                     param_name = arg.spelling or f'arg{len(params)}'
-                    param_type = get_yaml_type(arg.type)
-                    params.append((param_name, param_type))
+                    yaml_type, c_type = get_yaml_type(arg.type)
+                    params.append((param_name, yaml_type, c_type))
 
-                ret_type = get_yaml_type(cursor.result_type)
+                ret_yaml, ret_c = get_yaml_type(cursor.result_type)
+
+                # Analyze struct return type if applicable
+                struct_info = analyze_struct(cursor.result_type)
+
                 loc = cursor.location
 
                 # Get header file
@@ -174,14 +229,21 @@ def extract_all_functions(headers):
                 # Check if variadic
                 is_variadic = cursor.type.is_function_variadic()
 
-                functions[name] = {
+                func_info = {
                     'name': name,
                     'params': params,
-                    'returns': ret_type,
+                    'returns': ret_yaml,
+                    'returns_c': ret_c,
                     'header': header,
                     'line': loc.line if loc.file else 0,
                     'variadic': is_variadic
                 }
+
+                # Add struct return info if applicable
+                if struct_info:
+                    func_info['struct_return'] = struct_info
+
+                functions[name] = func_info
 
             for child in cursor.get_children():
                 visit(child)
@@ -211,13 +273,21 @@ def format_yaml(functions, header_filter=None):
         for f in sorted(funcs, key=lambda x: x['name']):
             lines.append(f"  - name: {f['name']}")
             if f['params']:
-                params_str = ', '.join([f"{{{p[0]}: {p[1]}}}" for p in f['params']])
+                # Format: {name: yaml_type: c_type}
+                params_str = ', '.join([f"{{{p[0]}: {p[1]}: {p[2]}}}" for p in f['params']])
                 lines.append(f"    params: [{params_str}]")
             else:
                 lines.append(f"    params: []")
             lines.append(f"    returns: {f['returns']}")
+            lines.append(f"    returns_c: {f['returns_c']}")
             if f.get('variadic'):
                 lines.append(f"    variadic: true")
+            if f.get('struct_return'):
+                sr = f['struct_return']
+                if sr['singleton']:
+                    lines.append(f"    struct_return: {{singleton: true, field: {sr['field']}, field_type: {sr['field_type']}, size: {sr['size']}}}")
+                else:
+                    lines.append(f"    struct_return: {{singleton: false, size: {sr['size']}}}")
             lines.append("")
 
     return '\n'.join(lines)
