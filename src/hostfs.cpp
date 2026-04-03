@@ -73,7 +73,7 @@ int HostFS::dup(int fd) {
     return r < 0 ? -errno : r;
 }
 
-int HostFS::fcntl(int fd, int cmd, int64_t arg) {
+int HostFS::fcntl(int fd, int cmd, int32_t arg) {
     int r = ::fcntl(fd, cmd, arg);
     return r < 0 ? -errno : r;
 }
@@ -182,7 +182,7 @@ int HostFS::rename(std::string_view oldpath, std::string_view newpath) {
 
 // Misc
 
-int HostFS::ioctl(int fd, uint64_t request, void* arg) {
+int HostFS::ioctl(int fd, uint32_t request, void* arg) {
     int r = ::ioctl(fd, request, arg);
     return r < 0 ? -errno : r;
 }

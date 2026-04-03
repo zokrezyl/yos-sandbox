@@ -86,9 +86,8 @@ void endgrent(void) {}
 // File operations not in generated code
 // =====================================================================
 
-// pipe, pipe2, dup2 provided by yos-generated.c
+// pipe, pipe2, dup2, ioctl provided by yos-generated.c
 int dup3(int oldfd, int newfd, int flags) { errno = ENOSYS; return -1; }
-int ioctl(int fd, unsigned long req, ...) { return -1; }
 // isatty provided by yos-generated.c
 int flock(int fd, int op) { return 0; }
 int lchown(const char *p, uid_t o, gid_t g) { return 0; }

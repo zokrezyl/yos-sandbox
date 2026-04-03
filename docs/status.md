@@ -13,8 +13,24 @@
 
 | Command | Status | Issue |
 |---------|--------|-------|
-| `ls /` | BROKEN | Prints "ls:" with no output - likely opendir/readdir issue |
+| `ls /` | BROKEN | Calls func[137] which is an `unreachable` stub - missing function |
 | `cat file` | BROKEN | Not tested yet |
+
+## Current Investigation: `ls` crash
+
+Backtrace:
+```
+func[137] (unreachable stub)
+  <- func[334] (unnamed, calls func[137])
+    <- ls_main
+```
+
+func[135], func[136], func[137] are all 3-byte `unreachable` stubs with no names.
+- func[135]: sig=3
+- func[136]: sig=32 `(i32, i32) -> f64`
+- func[137]: sig=1 `(i32) -> i32`
+
+These are likely weak symbols that weren't resolved during linking. Need to identify what functions they should be.
 
 ## Fixed Bugs
 

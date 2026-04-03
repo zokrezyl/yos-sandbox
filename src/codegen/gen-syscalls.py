@@ -25,6 +25,8 @@ WASM_TYPES = {
     'i64': 'int64_t',
     'u32': 'uint32_t',
     'u64': 'uint64_t',
+    'f32': 'float',
+    'f64': 'double',
     'str': 'const char*',
     'ptr': 'void*',
     'void': 'void',
@@ -32,6 +34,7 @@ WASM_TYPES = {
 
 M3_SIG = {
     'i32': 'i', 'i64': 'I', 'u32': 'i', 'u64': 'I',
+    'f32': 'f', 'f64': 'F',
     'str': '*', 'ptr': '*', 'void': 'v',
 }
 
@@ -182,6 +185,7 @@ def generate_native_handler(func, namespace):
         return None
 
     lines = [f'm3ApiRawFunction({namespace}_{name}) {{']
+    lines.append(f'    YOS_DBG("SYSCALL: {name}\\n");')
 
     if returns != 'void':
         lines.append(f'    m3ApiReturnType({c_type(returns)});')
@@ -210,6 +214,10 @@ def generate_native_handler(func, namespace):
             lines.append('    uint32_t _msz = 0;')
             lines.append('    uint8_t* _mbase = m3_GetMemory(runtime, &_msz, 0);')
             lines.append('    m3ApiReturn((void*)(uintptr_t)((uint8_t*)_r - _mbase));')
+        elif returns in ('f32', 'f64'):
+            # Float returns: no errno check needed
+            lines.append(f'    auto _r = {native};')
+            lines.append('    m3ApiReturn(_r);')
         else:
             # Integer returns: check for error via < 0
             lines.append(f'    auto _r = {native};')
@@ -327,7 +335,16 @@ def main():
     (output_dir / 'wasm-stubs' / 'yos-generated.h').write_text('\n'.join(wasm_h) + '\n')
 
     # WASM stubs
-    wasm_c = [header, '#include "yos-generated.h"', '#include <stddef.h>', '']
+    wasm_c = [header, '#include "yos-generated.h"', '#include <stddef.h>', '''
+// dirent struct for readdir
+struct dirent {
+    unsigned long d_ino;
+    unsigned long d_off;
+    unsigned short d_reclen;
+    unsigned char d_type;
+    char d_name[256];
+};
+''']
 
     # Generate varargs infrastructure if any variadic functions
     if variadic_funcs:
@@ -440,6 +457,7 @@ static void __varargs_pack_printf(const char* fmt, __builtin_va_list ap, VarArgP
     native = [header, '''#pragma once
 #include "wasm3.h"
 #include "m3_env.h"
+#include "wasm-types.hpp"
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>

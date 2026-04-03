@@ -95,6 +95,21 @@ WasmProcess Runtime::createWasmProcess(
     }
     wp.module = module;
 
+    // Debug: check memory after module load
+    {
+        uint32_t memSize = 0;
+        uint8_t* mem = m3_GetMemory(wp.wrt, &memSize, 0);
+        YOS_DBG("yos: after m3_LoadModule: memSize=%u (0x%x)\n", memSize, memSize);
+        if (mem && memSize >= 102608) {
+            uint32_t heapPtrLoc = *(uint32_t*)(mem + 102604);
+            YOS_DBG("yos: heap_ptr @102604 = %u (0x%x)\n", heapPtrLoc, heapPtrLoc);
+            // Check first bytes of data section
+            YOS_DBG("yos: mem[65536..65543] = %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                    mem[65536], mem[65537], mem[65538], mem[65539],
+                    mem[65540], mem[65541], mem[65542], mem[65543]);
+        }
+    }
+
     linkSyscalls(wp.module);
 
     if (!memorySnapshot.empty()) {
@@ -639,9 +654,9 @@ void* Runtime::sbrk(ProcessContext* ctx, int64_t increment) {
     // Initialize heap_end on first call
     if (ctx->heapEnd == 0) {
         // Try to get __heap_base from wasm globals
-        // busybox.wasm has __heap_base = 102352
-        // Default to a reasonable value if we can't find it
-        ctx->heapEnd = 102400;  // Just above typical __heap_base
+        // busybox.wasm has __heap_base = 102608
+        // Default to just above that
+        ctx->heapEnd = 102624;  // Aligned above typical __heap_base
         YOS_DBG("sbrk: initialized heap at %u (memSize=%u)\n", ctx->heapEnd, memSize);
     }
 

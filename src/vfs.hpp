@@ -9,6 +9,7 @@
 #include <vector>
 #include <sys/stat.h>
 #include <dirent.h>
+#include "wasm-types.hpp"
 
 namespace yos {
 
@@ -37,7 +38,7 @@ public:
     virtual int ftruncate(int fd, int64_t length) = 0;
     virtual int fsync(int fd) = 0;
     virtual int dup(int fd) = 0;
-    virtual int fcntl(int fd, int cmd, int64_t arg) = 0;
+    virtual int fcntl(int fd, int cmd, int32_t arg) = 0;
 
     // Stat operations - return 0 or -errno
     virtual int stat(std::string_view path, struct stat* buf) = 0;
@@ -62,7 +63,7 @@ public:
     virtual int rename(std::string_view oldpath, std::string_view newpath) = 0;
 
     // Misc
-    virtual int ioctl(int fd, uint64_t request, void* arg) = 0;
+    virtual int ioctl(int fd, uint32_t request, void* arg) = 0;
     virtual int isatty(int fd) = 0;
 
     // Pipe
@@ -102,12 +103,17 @@ public:
     int fsync(int fd);
     int dup(int oldfd);
     int dup2(int oldfd, int newfd);
-    int fcntl(int fd, int cmd, int64_t arg);
+    int fcntl(int fd, int cmd, int32_t arg);
 
-    // Stat operations
+    // Stat operations (host stat - 144 bytes on 64-bit)
     int stat(std::string_view path, struct stat* buf);
     int lstat(std::string_view path, struct stat* buf);
     int fstat(int fd, struct stat* buf);
+
+    // WASM stat operations (wasm_stat - 64 bytes)
+    int stat_wasm(std::string_view path, struct wasm_stat* buf);
+    int lstat_wasm(std::string_view path, struct wasm_stat* buf);
+    int fstat_wasm(int fd, struct wasm_stat* buf);
     int access(std::string_view path, int mode);
     int chmod(std::string_view path, uint32_t mode);
     int chown(std::string_view path, uint32_t owner, uint32_t group);
@@ -128,7 +134,7 @@ public:
     int rename(std::string_view oldpath, std::string_view newpath);
 
     // Misc
-    int ioctl(int fd, uint64_t request, void* arg);
+    int ioctl(int fd, uint32_t request, void* arg);
     int isatty(int fd);
 
     // Pipe
@@ -137,7 +143,8 @@ public:
 
     // opendir/readdir/closedir - higher level wrappers
     void* opendir(std::string_view path);
-    void* readdir(void* dir);
+    void* readdir(void* dir, struct dirent* entry);
+    void* readdir_wasm(void* dir, struct wasm_dirent* entry);  // WASM version
     int closedir(void* dir);
 
 private:
@@ -171,6 +178,9 @@ private:
 
     // Next fd to allocate
     int _nextFd;
+
+    // DIR* handle table: index -> DIR*
+    std::vector<DIR*> _dirHandles;
 };
 
 } // namespace yos

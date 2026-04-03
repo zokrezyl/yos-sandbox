@@ -1,9 +1,32 @@
 #include "vfs.hpp"
+#include "debug.hpp"
 #include <algorithm>
 #include <cerrno>
+#include <cstddef>
 #include <cstring>
 
 namespace yos {
+
+// Convert host stat to WASM stat (72 bytes vs 144 bytes on 64-bit host)
+static void stat_to_wasm(const struct stat& src, wasm_stat& dst) {
+    dst.wasm_st_dev = static_cast<uint32_t>(src.st_dev);
+    dst.wasm_st_ino = static_cast<uint32_t>(src.st_ino);
+    dst.wasm_st_mode = static_cast<uint32_t>(src.st_mode);
+    dst.wasm_st_nlink = static_cast<uint32_t>(src.st_nlink);
+    dst.wasm_st_uid = static_cast<uint32_t>(src.st_uid);
+    dst.wasm_st_gid = static_cast<uint32_t>(src.st_gid);
+    dst.wasm_st_rdev = static_cast<uint32_t>(src.st_rdev);
+    dst._pad0 = 0;  // padding
+    dst.wasm_st_size = static_cast<int64_t>(src.st_size);
+    dst.wasm_st_blksize = static_cast<uint32_t>(src.st_blksize);
+    dst.wasm_st_blocks = static_cast<uint32_t>(src.st_blocks);
+    dst.wasm_st_atim_sec = static_cast<int32_t>(src.st_atim.tv_sec);
+    dst.wasm_st_atim_nsec = static_cast<int32_t>(src.st_atim.tv_nsec);
+    dst.wasm_st_mtim_sec = static_cast<int32_t>(src.st_mtim.tv_sec);
+    dst.wasm_st_mtim_nsec = static_cast<int32_t>(src.st_mtim.tv_nsec);
+    dst.wasm_st_ctim_sec = static_cast<int32_t>(src.st_ctim.tv_sec);
+    dst.wasm_st_ctim_nsec = static_cast<int32_t>(src.st_ctim.tv_nsec);
+}
 
 VFS::VFS() : _cwd("/"), _umask(0022), _nextFd(3) {
     // Reserve fds 0,1,2 for stdin/stdout/stderr
@@ -199,7 +222,7 @@ int VFS::dup2(int oldfd, int newfd) {
     return newfd;
 }
 
-int VFS::fcntl(int fd, int cmd, int64_t arg) {
+int VFS::fcntl(int fd, int cmd, int32_t arg) {
     auto* info = getFd(fd);
     if (!info) return -EBADF;
     return info->fs->fcntl(info->localFd, cmd, arg);
@@ -223,6 +246,40 @@ int VFS::fstat(int fd, struct stat* buf) {
     auto* info = getFd(fd);
     if (!info) return -EBADF;
     return info->fs->fstat(info->localFd, buf);
+}
+
+// WASM stat methods - convert from host stat (144 bytes) to wasm_stat (72 bytes)
+int VFS::stat_wasm(std::string_view path, struct wasm_stat* buf) {
+    YOS_DBG("  stat_wasm: path='%.*s' buf=%p\n", (int)path.size(), path.data(), (void*)buf);
+    struct stat host_stat;
+    int r = stat(path, &host_stat);
+    YOS_DBG("  stat_wasm: r=%d host_mode=0%o\n", r, host_stat.st_mode);
+    if (r == 0) {
+        stat_to_wasm(host_stat, *buf);
+        YOS_DBG("  stat_wasm: wasm_mode=0%o @ offset %zu\n",
+                buf->wasm_st_mode, offsetof(struct wasm_stat, wasm_st_mode));
+    }
+    return r;
+}
+
+int VFS::lstat_wasm(std::string_view path, struct wasm_stat* buf) {
+    YOS_DBG("  lstat_wasm: path='%.*s' buf=%p\n", (int)path.size(), path.data(), (void*)buf);
+    struct stat host_stat;
+    int r = lstat(path, &host_stat);
+    YOS_DBG("  lstat_wasm: result=%d mode=0%o size=%ld\n", r, host_stat.st_mode, (long)host_stat.st_size);
+    if (r == 0) {
+        stat_to_wasm(host_stat, *buf);
+    }
+    return r;
+}
+
+int VFS::fstat_wasm(int fd, struct wasm_stat* buf) {
+    struct stat host_stat;
+    int r = fstat(fd, &host_stat);
+    if (r == 0) {
+        stat_to_wasm(host_stat, *buf);
+    }
+    return r;
 }
 
 int VFS::access(std::string_view path, int mode) {
@@ -354,7 +411,7 @@ int VFS::rename(std::string_view oldpath, std::string_view newpath) {
 
 // Misc
 
-int VFS::ioctl(int fd, uint64_t request, void* arg) {
+int VFS::ioctl(int fd, uint32_t request, void* arg) {
     auto* info = getFd(fd);
     if (!info) return -EBADF;
     return info->fs->ioctl(info->localFd, request, arg);
@@ -392,18 +449,57 @@ int VFS::pipe2(int pipefd[2], int flags) {
 void* VFS::opendir(std::string_view path) {
     auto [fs, relPath] = resolve(path);
     if (!fs) return nullptr;
-    return fs->opendir(relPath);
+    DIR* dir = static_cast<DIR*>(fs->opendir(relPath));
+    if (!dir) return nullptr;
+
+    // Store in handle table and return index as "pointer"
+    _dirHandles.push_back(dir);
+    // Return handle as 1-based index (0 = NULL)
+    return reinterpret_cast<void*>(static_cast<uintptr_t>(_dirHandles.size()));
 }
 
-void* VFS::readdir(void* dir) {
-    // Need to track which fs owns this DIR*
-    // For now, this is a limitation - we assume HostFS
-    return nullptr;  // TODO: implement properly
+void* VFS::readdir(void* dir, struct dirent* entry) {
+    uintptr_t handle = reinterpret_cast<uintptr_t>(dir);
+    if (handle == 0 || handle > _dirHandles.size()) return nullptr;
+    DIR* d = _dirHandles[handle - 1];
+    if (!d) return nullptr;
+
+    struct dirent* result = ::readdir(d);
+    if (!result) return nullptr;
+
+    // Copy to user-provided buffer
+    *entry = *result;
+    return entry;
+}
+
+void* VFS::readdir_wasm(void* dir, struct wasm_dirent* entry) {
+    uintptr_t handle = reinterpret_cast<uintptr_t>(dir);
+    if (handle == 0 || handle > _dirHandles.size()) return nullptr;
+    DIR* d = _dirHandles[handle - 1];
+    if (!d) return nullptr;
+
+    struct dirent* result = ::readdir(d);
+    if (!result) return nullptr;
+
+    // Convert host dirent to wasm_dirent
+    entry->d_ino = static_cast<uint32_t>(result->d_ino);
+    entry->d_off = static_cast<uint32_t>(result->d_off);
+    entry->d_reclen = result->d_reclen;
+    entry->d_type = result->d_type;
+    std::strncpy(entry->d_name, result->d_name, 255);
+    entry->d_name[255] = '\0';
+    entry->_pad = 0;
+    return entry;
 }
 
 int VFS::closedir(void* dir) {
-    // Same issue as readdir
-    return -ENOSYS;  // TODO: implement properly
+    uintptr_t handle = reinterpret_cast<uintptr_t>(dir);
+    if (handle == 0 || handle > _dirHandles.size()) return -EINVAL;
+    DIR* d = _dirHandles[handle - 1];
+    if (!d) return -EINVAL;
+    int r = ::closedir(d);
+    _dirHandles[handle - 1] = nullptr;
+    return r;
 }
 
 } // namespace yos

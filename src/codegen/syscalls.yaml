@@ -61,8 +61,9 @@ file_ops:
     handler: vfs
     method: dup2(oldfd, newfd)
 
+  # NOTE: WASM32 uses 32-bit arg
   - name: fcntl
-    params: [{fd: i32}, {cmd: i32}, {arg: i64}]
+    params: [{fd: i32}, {cmd: i32}, {arg: i32}]
     returns: i32
     handler: vfs
     method: fcntl(fd, cmd, arg)
@@ -87,19 +88,19 @@ file_stat:
     params: [{path: str}, {buf: ptr}]
     returns: i32
     handler: vfs
-    method: stat(path, (struct stat*)buf)
+    method: stat_wasm(path, (struct wasm_stat*)buf)
 
   - name: lstat
     params: [{path: str}, {buf: ptr}]
     returns: i32
     handler: vfs
-    method: lstat(path, (struct stat*)buf)
+    method: lstat_wasm(path, (struct wasm_stat*)buf)
 
   - name: fstat
     params: [{fd: i32}, {buf: ptr}]
     returns: i32
     handler: vfs
-    method: fstat(fd, (struct stat*)buf)
+    method: fstat_wasm(fd, (struct wasm_stat*)buf)
 
   - name: access
     params: [{path: str}, {mode: i32}]
@@ -182,11 +183,19 @@ dir_ops:
     handler: vfs
     method: opendir(path)
 
+  # Internal readdir that fills user buffer (WASM version)
+  - name: __readdir_r
+    params: [{dir: ptr}, {entry: ptr}]
+    returns: ptr
+    handler: vfs
+    method: readdir_wasm(dir, (struct wasm_dirent*)entry)
+
+  # POSIX readdir with static buffer
   - name: readdir
     params: [{dir: ptr}]
     returns: ptr
-    handler: vfs
-    method: readdir(dir)
+    handler: wasm_impl
+    body: "static struct dirent _ent;return __yos___readdir_r(dir,&_ent);"
 
   - name: closedir
     params: [{dir: ptr}]
@@ -369,9 +378,10 @@ user_group:
 # Time - passthrough to native
 # =============================================================================
 time:
+  # NOTE: WASM32 uses 32-bit time_t
   - name: time
     params: [{tloc: ptr}]
-    returns: i64
+    returns: i32
     handler: passthrough
     native: time((time_t*)tloc)
 
@@ -451,8 +461,9 @@ varargs:
 # Misc - passthrough or stub
 # =============================================================================
 misc:
+  # NOTE: WASM32 uses 32-bit request
   - name: ioctl
-    params: [{fd: i32}, {request: u64}, {arg: ptr}]
+    params: [{fd: i32}, {request: u32}, {arg: ptr}]
     returns: i32
     handler: vfs
     method: ioctl(fd, request, arg)
@@ -886,9 +897,10 @@ passthrough_stdio:
     handler: passthrough
     native: fgets((char*)s, size, (FILE*)stream)
 
+  # NOTE: WASM32 uses 32-bit ssize_t
   - name: getline
     params: [{lineptr: ptr}, {n: ptr}, {stream: ptr}]
-    returns: i64
+    returns: i32
     handler: passthrough
     native: getline((char**)lineptr, (size_t*)n, (FILE*)stream)
 
@@ -1080,9 +1092,10 @@ passthrough_stdlib:
     handler: passthrough
     native: srand(seed)
 
+  # NOTE: WASM32 uses 32-bit long
   - name: strtol
     params: [{nptr: str}, {endptr: ptr}, {base: i32}]
-    returns: i64
+    returns: i32
     handler: passthrough
     native: strtol(nptr, (char**)endptr, base)
 
@@ -1092,9 +1105,10 @@ passthrough_stdlib:
     handler: passthrough
     native: strtoll(nptr, (char**)endptr, base)
 
+  # NOTE: WASM32 uses 32-bit unsigned long
   - name: strtoul
     params: [{nptr: str}, {endptr: ptr}, {base: i32}]
-    returns: u64
+    returns: u32
     handler: passthrough
     native: strtoul(nptr, (char**)endptr, base)
 
@@ -1106,9 +1120,9 @@ passthrough_stdlib:
 
   - name: strtod
     params: [{nptr: str}, {endptr: ptr}]
-    returns: i64
-    handler: stub
-    value: 0
+    returns: f64
+    handler: passthrough
+    native: strtod(nptr, (char**)endptr)
 
   - name: getpagesize
     params: []
@@ -1129,9 +1143,10 @@ passthrough_time:
     handler: passthrough
     native: localtime_r((const time_t*)timep, (struct tm*)result)
 
+  # NOTE: WASM32 uses 32-bit time_t
   - name: mktime
     params: [{tm: ptr}]
-    returns: i64
+    returns: i32
     handler: passthrough
     native: mktime((struct tm*)tm)
 
@@ -1160,14 +1175,15 @@ passthrough_time:
     native: utimensat(dirfd, pathname, (const struct timespec*)times, flags)
 
 passthrough_misc:
+  # NOTE: WASM32 uses 32-bit dev_t, so we use u32 not u64
   - name: major
-    params: [{dev: u64}]
+    params: [{dev: u32}]
     returns: u32
     handler: passthrough
     native: major(dev)
 
   - name: minor
-    params: [{dev: u64}]
+    params: [{dev: u32}]
     returns: u32
     handler: passthrough
     native: minor(dev)

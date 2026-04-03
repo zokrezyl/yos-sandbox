@@ -21,7 +21,7 @@ public:
     int ftruncate(int fd, int64_t length) override;
     int fsync(int fd) override;
     int dup(int fd) override;
-    int fcntl(int fd, int cmd, int64_t arg) override;
+    int fcntl(int fd, int cmd, int32_t arg) override;
 
     // Stat operations
     int stat(std::string_view path, struct stat* buf) override;
@@ -46,7 +46,7 @@ public:
     int rename(std::string_view oldpath, std::string_view newpath) override;
 
     // Misc
-    int ioctl(int fd, uint64_t request, void* arg) override;
+    int ioctl(int fd, uint32_t request, void* arg) override;
     int isatty(int fd) override;
 
     // Pipe
