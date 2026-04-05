@@ -69,6 +69,69 @@ add_custom_command(
 
 add_custom_target(generate_syscalls DEPENDS ${GENERATED_HANDLERS} ${GENERATED_LINK})
 
+# Generate libc wrappers from Linux headers
+set(LIBC_YAML "${CODEGEN_DIR}/libc.yaml")
+set(LIBC_WRAPPERS_C "${CODEGEN_DIR}/libc-wrappers.c")
+set(LIBC_WRAPPERS_H "${CODEGEN_DIR}/libc-wrappers.h")
+set(EXTRACT_SCRIPT "${CMAKE_SOURCE_DIR}/tools/extract-signatures.py")
+set(GENERATE_LIBC_SCRIPT "${CMAKE_SOURCE_DIR}/tools/generate-libc-calls.py")
+
+# Step 1: Extract function signatures from headers -> libc.yaml
+add_custom_command(
+    OUTPUT ${LIBC_YAML}
+    COMMAND ${UV_TOOL} run python3 ${EXTRACT_SCRIPT}
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    DEPENDS ${EXTRACT_SCRIPT}
+    COMMENT "Extracting libc function signatures"
+)
+
+# Step 2: Generate wrappers and smoke tests from libc.yaml
+add_custom_command(
+    OUTPUT ${LIBC_WRAPPERS_C} ${LIBC_WRAPPERS_H}
+    COMMAND ${CMAKE_COMMAND} -E remove_directory ${CODEGEN_DIR}/smoke-tests
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CODEGEN_DIR}/smoke-tests
+    COMMAND ${UV_TOOL} run python3 ${GENERATE_LIBC_SCRIPT}
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    DEPENDS ${LIBC_YAML} ${GENERATE_LIBC_SCRIPT}
+    COMMENT "Generating libc wrappers and smoke tests"
+)
+
+add_custom_target(generate_libc DEPENDS ${LIBC_WRAPPERS_C} ${LIBC_WRAPPERS_H})
+
+# Smoke test runner for libc wrappers - use system gcc to avoid nix
+set(SMOKE_TEST_DIR "${CODEGEN_DIR}/smoke-tests")
+enable_language(ASM)
+
+# Build smoke_runner with system compiler (not nix) to get full libc
+add_custom_command(
+    OUTPUT ${CMAKE_BINARY_DIR}/smoke_runner
+    COMMAND /usr/bin/gcc -std=c11 -O2
+        -I${wasm3_SOURCE_DIR}/source
+        -I${CMAKE_SOURCE_DIR}/src
+        -o ${CMAKE_BINARY_DIR}/smoke_runner
+        ${CMAKE_SOURCE_DIR}/tools/smoke-runner.c
+        ${LIBC_WRAPPERS_C}
+        ${CMAKE_SOURCE_DIR}/src/varargs_trampoline.S
+        $<TARGET_FILE:wasm3>
+        -lm -lpthread -ldl -lcrypt -lresolv
+    DEPENDS generate_libc wasm3
+        ${CMAKE_SOURCE_DIR}/tools/smoke-runner.c
+        ${CMAKE_SOURCE_DIR}/src/varargs_trampoline.S
+    COMMENT "Building smoke test runner with system gcc"
+)
+add_custom_target(smoke_runner DEPENDS ${CMAKE_BINARY_DIR}/smoke_runner)
+
+# Custom target to build all smoke test .wasm files and run tests
+add_custom_target(smoke_tests
+    COMMAND ${CMAKE_COMMAND}
+        -DSMOKE_TEST_DIR=${SMOKE_TEST_DIR}
+        -DRUNNER=${CMAKE_BINARY_DIR}/smoke_runner
+        -P ${CMAKE_SOURCE_DIR}/cmake/run-smoke-tests.cmake
+    DEPENDS smoke_runner generate_libc
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    COMMENT "Running smoke tests"
+)
+
 # YOS runtime (host)
 add_executable(yos
     src/main.cpp

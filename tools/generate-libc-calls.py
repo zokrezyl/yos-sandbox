@@ -366,17 +366,15 @@ def generate_test(func):
     struct_return = func.get('struct_return')
     ret_c = func.get('returns_c', 'int')
 
+    # Skip variadic functions - they need special trampoline handling
+    if variadic:
+        return None
+
     # Build test call with default values
     args = []
     for p in params:
         ptype = p[1]  # yaml_type
         args.append(DEFAULT_VALUES.get(ptype, '0'))
-
-    # Variadic functions: add NULL terminator or appropriate vararg
-    if variadic:
-        # For printf-family, format string is usually first/second param
-        # Just call with fixed args, no extra varargs
-        pass
 
     args_str = ', '.join(args)
 
