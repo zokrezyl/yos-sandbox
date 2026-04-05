@@ -1,7 +1,20 @@
-.PHONY: build clean reconfigure busybox run-tests unit-test build-tests run-busybox-tests
+.PHONY: build clean reconfigure busybox run-tests unit-test build-tests run-busybox-tests glibc-exports libc-wrappers
 
 BUILD_DIR := build
 WASM_TEST_DIR := $(BUILD_DIR)/tests/unit/wasm
+GENERATED_DIR := $(BUILD_DIR)/generated
+
+# Extract glibc exported functions
+$(GENERATED_DIR)/glibc-exports.txt:
+	@mkdir -p $(GENERATED_DIR)
+	nm -D --defined-only /lib/x86_64-linux-gnu/libc.so.6 | grep " T " | awk '{print $$3}' | sed 's/@.*//' | sort -u > $@
+	@echo "Extracted $$(wc -l < $@) glibc exports"
+
+glibc-exports: $(GENERATED_DIR)/glibc-exports.txt
+
+# Generate libc wrappers (depends on glibc-exports)
+libc-wrappers: glibc-exports
+	uv run python tools/generate-libc-calls.py
 
 build:
 	@cmake -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON > /dev/null 2>&1

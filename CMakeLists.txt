@@ -128,4 +128,5 @@ add_custom_command(
 add_custom_target(wasm_programs ALL DEPENDS "${CMAKE_BINARY_DIR}/wasm/shell.wasm")
 
 # Unit tests
+enable_testing()
 add_subdirectory(tests/unit)

@@ -122,12 +122,81 @@ YOS (Your OS Sandbox) emulates a multi-process POSIX environment for WebAssembly
 - Passthrough returns `ptr` - Must convert host pointer back to WASM offset
 - Some functions (getenv, strerror) return host memory - Cannot convert, must stub or copy
 
-## Variadic Functions
+## Variadic Functions (Generic Solution)
 
-Printf-family functions use varargs bridge:
-1. WASM wrapper packs args into `VarArgPack` struct
-2. Calls `__yos_varargs_call(func_id, arg1, arg2, arg3, &pack)`
-3. Native handler unpacks and calls real printf
+### Requirement
+
+Guest WASM code calls libc variadic functions (printf, sprintf, execl, etc.) that must be dynamically linked to YOS-generated wrappers, which call the SAME native libc function (printf calls printf, execl calls execl - NOT v* variants).
+
+### How WASM Compiles Varargs
+
+WASM compiler transforms variadic function calls into a TWO-PARAMETER signature:
+
+```c
+// Source: printf("Hello %s, num %d", name, 42)
+
+// WASM compilation result:
+// 1. Pack varargs onto stack in linear memory
+// 2. Call printf(fmt_ptr, va_ptr)
+
+// Memory layout at va_ptr:
+// offset 0: pointer to "name" string (i32)
+// offset 4: value 42 (i32)
+```
+
+The function signature becomes `(i32 fmt_ptr, i32 va_ptr) -> i32` where `va_ptr` points to packed arguments in WASM linear memory.
+
+### Generic Solution
+
+WASM linear memory IS host memory. The packed arguments at `mem + va_ptr` can be used directly.
+
+**Assembly trampoline** loads args from memory into registers/stack and calls the native function:
+
+```asm
+; x86_64 calling convention:
+; Integer args: RDI, RSI, RDX, RCX, R8, R9, then stack
+; Float args: XMM0-XMM7
+
+call_native_varargs:
+    ; Input: RDI=func_ptr, RSI=args_array, RDX=arg_count, RCX=type_mask
+    ; Load args from array into appropriate registers
+    ; Push overflow args to stack
+    ; Call function
+    ; Return result
+```
+
+### Generated Wrapper Pattern
+
+For ANY variadic function, the generator produces:
+
+```c
+m3ApiRawFunction(libc_{name}) {
+    m3ApiReturnType({return_type});
+
+    // Get fixed params from extracted signature
+    m3ApiGetArg{Mem}({type}, {param_name});  // for each param
+
+    // Get va_ptr (WASM adds this for varargs)
+    m3ApiGetArg(uint32_t, _va_ptr);
+
+    // Get WASM memory - args are packed at mem + va_ptr
+    uint32_t _mem_size;
+    uint8_t* _mem = m3_GetMemory(runtime, &_mem_size, 0);
+
+    // Call native {name} with args from WASM memory
+    // (implementation via assembly trampoline or platform-specific mechanism)
+    {return_type} _result = call_native_varargs({name}, _mem + _va_ptr, ...);
+    m3ApiReturn(_result);
+}
+```
+
+### Key Points
+
+1. **Same function** - printf calls printf, execl calls execl, NOT v* variants
+2. **Generic** - ONE pattern for ALL variadic functions
+3. **Signature-driven** - Generated from extracted function signatures
+4. **Args in memory** - WASM packs args, we read and forward them
+5. **Platform trampoline** - Assembly forwards args to native calling convention
 
 ## Thread Safety
 

@@ -42,10 +42,10 @@ TYPE_MAP = {
     'void': 'void',
     'char *': 'str',
     'const char *': 'str',
+    'wchar_t *': 'ptr',  # wide char pointer - treat as raw ptr
+    'const wchar_t *': 'ptr',
     'void *': 'ptr',
     'const void *': 'ptr',
-    'DIR *': 'handle',  # opaque handle
-    'FILE *': 'handle',  # opaque handle
     'struct DIR *': 'handle',
     'struct FILE *': 'handle',
     'struct stat *': 'ptr',
@@ -125,6 +125,22 @@ def analyze_struct(clang_type):
         'size': canon.get_size()
     }
 
+def is_opaque_handle(clang_type):
+    """Check if type is an opaque handle (pointer to struct, or typedef to pointer)"""
+    canon = clang_type.get_canonical()
+
+    # Direct pointer to struct (FILE*, DIR*)
+    if canon.kind == TypeKind.POINTER:
+        pointee = canon.get_pointee()
+        if pointee.kind == TypeKind.RECORD:
+            return True
+        # Also handle const pointers like wctrans_t (const int*)
+        # These are opaque handles even though they point to int
+        if clang_type.kind == TypeKind.ELABORATED and clang_type.spelling != canon.spelling:
+            # It's a typedef that resolves to a pointer - treat as handle
+            return True
+    return False
+
 def get_yaml_type(clang_type):
     """Get type info - returns (yaml_type, c_type) tuple"""
     type_str = clang_type.spelling
@@ -132,6 +148,10 @@ def get_yaml_type(clang_type):
     # Clean up type string
     c_type = type_str.replace('__restrict', '').replace('restrict', '').strip()
     c_type = ' '.join(c_type.split())  # normalize whitespace
+
+    # Check for opaque handle types first
+    if is_opaque_handle(clang_type):
+        return 'handle', c_type
 
     # Determine yaml type for m3 signature
     if type_str in TYPE_MAP:
@@ -212,17 +232,60 @@ def extract_all_functions(headers):
 
                 ret_yaml, ret_c = get_yaml_type(cursor.result_type)
 
-                # Analyze struct return type if applicable
+                # Analyze struct/complex return type if applicable
                 struct_info = analyze_struct(cursor.result_type)
+
+                # Check for complex return types - they use sret like structs
+                if not struct_info and '_Complex' in ret_c:
+                    if 'float' in ret_c and 'double' not in ret_c:
+                        struct_info = {'singleton': False, 'size': 8}  # float complex
+                    elif 'long double' in ret_c:
+                        struct_info = {'singleton': False, 'size': 32}  # long double complex
+                    elif 'double' in ret_c:
+                        struct_info = {'singleton': False, 'size': 16}  # double complex
 
                 loc = cursor.location
 
-                # Get header file
+                # Get header file - normalize to public headers
                 header = ""
                 if loc.file:
                     fpath = str(loc.file)
                     if '/usr/include/' in fpath:
                         header = fpath.split('/usr/include/')[-1]
+                        # Normalize internal/arch-specific headers to public headers
+                        if 'x86_64-linux-gnu/' in header:
+                            header = header.replace('x86_64-linux-gnu/', '')
+                        if header.startswith('bits/') or '/bits/' in header:
+                            # Map common bits headers to their public headers
+                            if 'fcntl' in header: header = 'fcntl.h'
+                            elif 'mman' in header: header = 'sys/mman.h'
+                            elif 'getopt' in header: header = 'getopt.h'
+                            elif 'mathcalls' in header: header = 'math.h'
+                            elif 'stat' in header: header = 'sys/stat.h'
+                            elif 'socket' in header: header = 'sys/socket.h'
+                            elif 'time' in header: header = 'time.h'
+                            elif 'types' in header: header = 'sys/types.h'
+                            elif 'stdio' in header: header = 'stdio.h'
+                            elif 'stdlib' in header: header = 'stdlib.h'
+                            elif 'string' in header: header = 'string.h'
+                            elif 'unistd' in header: header = 'unistd.h'
+                            elif 'signal' in header: header = 'signal.h'
+                            elif 'errno' in header: header = 'errno.h'
+                            elif 'pthread' in header: header = 'pthread.h'
+                            elif 'sched' in header: header = 'sched.h'
+                            elif 'resource' in header: header = 'sys/resource.h'
+                            elif 'wait' in header: header = 'sys/wait.h'
+                            elif 'poll' in header: header = 'poll.h'
+                            elif 'ioctl' in header: header = 'sys/ioctl.h'
+                            elif 'termios' in header: header = 'termios.h'
+                            elif 'dirent' in header: header = 'dirent.h'
+                            elif 'dlfcn' in header: header = 'dlfcn.h'
+                            elif 'locale' in header: header = 'locale.h'
+                            elif 'wchar' in header: header = 'wchar.h'
+                            elif 'ctype' in header: header = 'ctype.h'
+                            elif 'wctype' in header: header = 'wctype.h'
+                            elif 'cpu-set' in header: header = 'sched.h'
+                            else: header = ''  # Unknown internal header, skip
                     else:
                         header = os.path.basename(fpath)
 
@@ -304,23 +367,41 @@ if __name__ == '__main__':
         'wchar.h', 'locale.h', 'math.h', 'complex.h', 'fenv.h', 'errno.h',
         'assert.h', 'stdarg.h', 'stddef.h', 'stdint.h', 'inttypes.h',
         'stdbool.h', 'limits.h', 'float.h', 'iso646.h', 'setjmp.h',
-        'signal.h', 'time.h',
+        'signal.h', 'time.h', 'uchar.h', 'threads.h',
 
         # POSIX
         'unistd.h', 'fcntl.h', 'sys/types.h', 'sys/stat.h', 'sys/wait.h',
         'sys/time.h', 'sys/times.h', 'sys/resource.h', 'sys/utsname.h',
         'sys/mman.h', 'sys/ioctl.h', 'sys/socket.h', 'sys/select.h',
         'sys/un.h', 'sys/uio.h', 'sys/file.h', 'sys/statvfs.h',
+        'sys/msg.h', 'sys/sem.h', 'sys/shm.h', 'sys/ipc.h',
         'poll.h', 'dirent.h', 'termios.h', 'pwd.h', 'grp.h',
-        'netinet/in.h', 'arpa/inet.h', 'netdb.h',
+        'netinet/in.h', 'arpa/inet.h', 'netdb.h', 'net/if.h',
         'dlfcn.h', 'fnmatch.h', 'glob.h', 'wordexp.h',
         'regex.h', 'sched.h', 'semaphore.h', 'pthread.h',
         'spawn.h', 'syslog.h', 'utime.h', 'utmp.h',
+        'aio.h', 'mqueue.h', 'nl_types.h', 'monetary.h',
+        'langinfo.h', 'iconv.h', 'search.h', 'ftw.h',
+        'libgen.h', 'execinfo.h', 'alloca.h', 'getopt.h',
+        'sys/xattr.h', 'sys/swap.h', 'sys/reboot.h', 'sys/mount.h',
+        'sys/quota.h', 'sys/fsuid.h', 'sys/klog.h', 'sys/sysinfo.h',
 
         # Linux-specific
         'sys/prctl.h', 'sys/epoll.h', 'sys/eventfd.h', 'sys/signalfd.h',
         'sys/timerfd.h', 'sys/inotify.h', 'sys/sendfile.h',
         'sys/syscall.h', 'linux/limits.h',
+        'crypt.h', 'shadow.h', 'mntent.h', 'fstab.h',
+        'resolv.h', 'ifaddrs.h', 'pty.h', 'utmpx.h',
+        'argz.h', 'envz.h', 'err.h', 'error.h',
+        'netinet/ether.h', 'sys/fanotify.h',
+        'gshadow.h', 'aliases.h', 'sys/auxv.h',
+        'obstack.h', 'printf.h', 'sys/personality.h',
+        'fts.h', 'mcheck.h', 'sys/io.h', 'sys/timex.h',
+        'sys/vlimit.h', 'sys/vtimes.h', 'sys/kd.h',
+        'stropts.h', 'sys/module.h',
+        'fmtmsg.h', 'sys/timeb.h', 'rpc/netdb.h',
+        'sys/sysctl.h', 'ttyent.h', 'syscall.h',
+        'sys/ptrace.h', 'stdbit.h', 'sys/pidfd.h',
     ]
 
     print(f"Extracting functions from {len(headers)} headers...")

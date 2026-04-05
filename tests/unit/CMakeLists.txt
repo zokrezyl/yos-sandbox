@@ -95,9 +95,7 @@ target_include_directories(run_unit_tests PRIVATE
 # Make test runner depend on WASM files
 add_dependencies(run_unit_tests unit_test_wasm generate_syscalls)
 
-# CTest integration
-enable_testing()
-
+# CTest integration (enable_testing() called from top-level CMakeLists.txt)
 foreach(TEST_NAME ${UNIT_TESTS})
     add_test(
         NAME ${TEST_NAME}
@@ -105,3 +103,21 @@ foreach(TEST_NAME ${UNIT_TESTS})
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     )
 endforeach()
+
+# Native (host) unit tests - test components that run on the host, not in WASM
+# Enable ASM language for assembly files
+enable_language(ASM)
+
+# Varargs trampoline test - validates the assembly trampoline for calling native functions
+add_executable(test_varargs_trampoline
+    test_varargs_trampoline.c
+    ${CMAKE_SOURCE_DIR}/src/varargs_trampoline.S
+)
+
+target_compile_options(test_varargs_trampoline PRIVATE -std=c11 -O2 -Wall)
+
+add_test(
+    NAME varargs_trampoline
+    COMMAND test_varargs_trampoline
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
