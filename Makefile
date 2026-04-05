@@ -1,13 +1,15 @@
-.PHONY: build clean reconfigure busybox run-tests unit-test build-tests run-busybox-tests glibc-exports libc-wrappers
+.PHONY: all build clean reconfigure busybox run-tests unit-test build-tests run-busybox-tests glibc-exports libc-wrappers
 
 BUILD_DIR := build
+
+all: build
 WASM_TEST_DIR := $(BUILD_DIR)/tests/unit/wasm
 GENERATED_DIR := $(BUILD_DIR)/generated
 
 # Extract glibc exported functions
 $(GENERATED_DIR)/glibc-exports.txt:
 	@mkdir -p $(GENERATED_DIR)
-	nm -D --defined-only /lib/x86_64-linux-gnu/libc.so.6 | grep " T " | awk '{print $$3}' | sed 's/@.*//' | sort -u > $@
+	nm -D --defined-only /lib/x86_64-linux-gnu/libc.so.6 | grep -E " [TiW] " | awk '{print $$3}' | sed 's/@.*//' | sort -u > $@
 	@echo "Extracted $$(wc -l < $@) glibc exports"
 
 glibc-exports: $(GENERATED_DIR)/glibc-exports.txt
@@ -16,7 +18,7 @@ glibc-exports: $(GENERATED_DIR)/glibc-exports.txt
 libc-wrappers: glibc-exports
 	uv run python tools/generate-libc-calls.py
 
-build:
+build: glibc-exports
 	@cmake -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON > /dev/null 2>&1
 	@cmake --build $(BUILD_DIR) -j$$(nproc)
 
@@ -25,6 +27,7 @@ clean:
 
 reconfigure:
 	@rm -rf $(BUILD_DIR)
+	@$(MAKE) glibc-exports
 	@cmake -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 	@cmake --build $(BUILD_DIR) -j$$(nproc)
 

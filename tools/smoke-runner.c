@@ -6,6 +6,7 @@
 #include <string.h>
 #include "wasm3.h"
 #include "m3_env.h"
+#include "yos-runtime.h"
 
 // Generated libc wrappers
 void linkLibcFunctions(IM3Module module);
@@ -26,17 +27,36 @@ static int runTest(const char* wasmPath) {
         fclose(f);
         return 1;
     }
-    fread(wasm, 1, size, f);
+    if (fread(wasm, 1, size, f) != size) {
+        fprintf(stderr, "Failed to read: %s\n", wasmPath);
+        free(wasm);
+        fclose(f);
+        return 1;
+    }
     fclose(f);
 
+    // Create YOS context for hooked functions
+    yos_ctx_t* ctx = yos_ctx_create();
+    if (!ctx) {
+        fprintf(stderr, "Failed to create yos context\n");
+        free(wasm);
+        return 1;
+    }
+    yos_ctx_init_stdio(ctx);
+
     IM3Environment env = m3_NewEnvironment();
-    IM3Runtime runtime = m3_NewRuntime(env, 64 * 1024, NULL);
+    // Pass ctx as user data to wasm3 runtime
+    IM3Runtime runtime = m3_NewRuntime(env, 64 * 1024, ctx);
+
+    // Store wasm runtime handle in ctx for memory access
+    ctx->wasm_runtime = runtime;
 
     IM3Module module = NULL;
     M3Result result = m3_ParseModule(env, &module, wasm, size);
     if (result) {
         fprintf(stderr, "Parse error: %s\n", result);
         free(wasm);
+        yos_ctx_destroy(ctx);
         m3_FreeRuntime(runtime);
         m3_FreeEnvironment(env);
         return 1;
@@ -46,6 +66,7 @@ static int runTest(const char* wasmPath) {
     if (result) {
         fprintf(stderr, "Load error: %s\n", result);
         free(wasm);
+        yos_ctx_destroy(ctx);
         m3_FreeRuntime(runtime);
         m3_FreeEnvironment(env);
         return 1;
@@ -59,6 +80,7 @@ static int runTest(const char* wasmPath) {
     if (result) {
         fprintf(stderr, "No _start: %s\n", result);
         free(wasm);
+        yos_ctx_destroy(ctx);
         m3_FreeRuntime(runtime);
         m3_FreeEnvironment(env);
         return 1;
@@ -77,12 +99,16 @@ static int runTest(const char* wasmPath) {
     }
 
     free(wasm);
+    yos_ctx_destroy(ctx);
     m3_FreeRuntime(runtime);
     m3_FreeEnvironment(env);
     return exitCode;
 }
 
 int main(int argc, char** argv) {
+    // Initialize YOS runtime (logging, process table, etc.)
+    yos_init();
+
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <test.wasm>\n", argv[0]);
         return 1;

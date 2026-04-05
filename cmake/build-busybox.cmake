@@ -33,17 +33,6 @@ if(NOT rc EQUAL 0)
     message(FATAL_ERROR "Failed to compile yos-stubs.c:\n${err}")
 endif()
 
-# Compile yos-generated.o (includes variadic function wrappers) (directly with clang, not through wasm-cc wrapper to avoid wasm-compat.h conflict)
-message(STATUS "Compiling yos-generated.o...")
-execute_process(
-    COMMAND ${WASI_CC_ABS} --target=wasm32 -nostdlib -c
-        ${CODEGEN_DIR}/wasm-stubs/yos-generated.c -o ${BB_BUILD}/yos-generated.o
-    RESULT_VARIABLE rc
-    ERROR_VARIABLE err
-)
-if(NOT rc EQUAL 0)
-    message(FATAL_ERROR "Failed to compile yos-generated.c:\n${err}")
-endif()
 
 # Step 1: allnoconfig
 message(STATUS "Configuring busybox (allnoconfig)...")

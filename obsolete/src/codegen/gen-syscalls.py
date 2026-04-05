@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """
-YOS Syscall Code Generator
+YOS Syscall Code Generator (Pure C)
 
 Reads syscalls.yaml and generates:
   1. wasm-stubs/yos-generated.c   - WASM-side stubs
-  2. src/yos-handlers-generated.cpp - Native-side m3Api handlers
-  3. src/yos-link-generated.cpp   - Link table for wasm3
-  4. wasm-stubs/yos-generated.h   - Header for wasm side
+  2. wasm-stubs/yos-generated.h   - Header for wasm side
+  3. src/yos-handlers-generated.h - Native-side m3Api handlers (pure C)
+  4. src/yos-link-generated.h     - Link table for wasm3 (pure C)
 
 Handler types:
   - passthrough: direct native call
-  - vfs: ctx->vfs->method()
-  - runtime: ctx->runtime->method()
+  - yos: yos_*() function via yos-runtime.h
   - stub: return fixed value
 """
 
@@ -89,7 +88,7 @@ def generate_variadic_wasm_wrapper(func, func_id):
 
     # Generate wrapper that packs varargs
     lines = [f'{ret_type} {name}({param_list}) {{']
-    lines.append('    VarArgPack pack = {{0}};')
+    lines.append('    VarArgPack pack = {0};')
     lines.append('    __builtin_va_list ap;')
     lines.append(f'    __builtin_va_start(ap, {fixed_args[-1] if fixed_args else "..."});')
 
@@ -167,6 +166,7 @@ def generate_wasm_stub(func, namespace):
     return import_decl, wrapper
 
 def generate_native_handler(func, namespace):
+    """Generate pure C m3ApiRawFunction handler using yos_* functions."""
     name = func['name']
     params = parse_params(func.get('params', []))
     returns = func.get('returns', 'void')
@@ -185,12 +185,12 @@ def generate_native_handler(func, namespace):
     if handler == 'wasm_impl':
         return None
 
-    # extern: handler is provided in syscalls.cpp, skip generation
+    # extern: handler is provided externally, skip generation
     if handler == 'extern':
         return None
 
-    lines = [f'm3ApiRawFunction({namespace}_{name}) {{']
-    lines.append(f'    YOS_DBG("SYSCALL: {name}\\n");')
+    lines = [f'm3ApiRawFunction(handler_{namespace}_{name}) {{']
+    lines.append(f'    YOS_TRACE("syscall {name}");')
 
     if returns != 'void':
         lines.append(f'    m3ApiReturnType({c_type(returns)});')
@@ -199,12 +199,16 @@ def generate_native_handler(func, namespace):
     for pname, ptype in params:
         lines.append(f'    {m3_getter(ptype, pname)};')
 
+    ret_ctype = c_type(returns)
+
     # Generate call based on handler type
     if handler == 'stub':
         value = func.get('value', 0)
         if returns == 'void':
+            lines.append(f'    YOS_WARN("stub function {name} called");')
             lines.append('    m3ApiSuccess();')
         else:
+            lines.append(f'    YOS_WARN("stub function {name} called, returning {value}");')
             lines.append(f'    m3ApiReturn({value});')
 
     elif handler == 'passthrough':
@@ -214,51 +218,45 @@ def generate_native_handler(func, namespace):
             lines.append('    m3ApiSuccess();')
         elif returns == 'ptr':
             # Pointer returns: convert host pointer back to WASM address
-            lines.append(f'    auto _r = {native};')
+            lines.append(f'    {ret_ctype} _r = {native};')
             lines.append('    if (_r == NULL) m3ApiReturn(0);')
             lines.append('    uint32_t _msz = 0;')
             lines.append('    uint8_t* _mbase = m3_GetMemory(runtime, &_msz, 0);')
             lines.append('    m3ApiReturn((void*)(uintptr_t)((uint8_t*)_r - _mbase));')
         elif returns in ('f32', 'f64'):
             # Float returns: no errno check needed
-            lines.append(f'    auto _r = {native};')
+            lines.append(f'    {ret_ctype} _r = {native};')
             lines.append('    m3ApiReturn(_r);')
         else:
             # Integer returns: check for error via < 0
-            lines.append(f'    auto _r = {native};')
+            lines.append(f'    {ret_ctype} _r = {native};')
             lines.append('    m3ApiReturn(_r < 0 ? -errno : _r);')
 
-    elif handler == 'vfs':
+    elif handler in ('yos', 'vfs', 'runtime'):
+        # Call yos_* function from yos-runtime.h
+        # 'vfs' and 'runtime' are legacy names, all use yos_* functions now
+        lines.append('    yos_exec_ctx_t* ctx = (yos_exec_ctx_t*)m3_GetUserData(runtime);')
         method = func.get('method', f'{name}({", ".join(p[0] for p in params)})')
-        lines.append('    auto* ctx = getProcessContext(runtime);')
-        if returns == 'void':
-            lines.append(f'    ctx->vfs->{method};')
-            lines.append('    m3ApiSuccess();')
-        else:
-            lines.append(f'    auto _r = ctx->vfs->{method};')
-            lines.append('    m3ApiReturn(_r);')
-
-    elif handler == 'runtime':
-        method = func.get('method', f'{name}({", ".join(p[0] for p in params)})')
-        lines.append('    auto* ctx = getProcessContext(runtime);')
-        # Runtime methods take ctx as first parameter
+        # Parse method to extract function name and args
         if '(' in method:
             method_name, method_args = method.split('(', 1)
             method_args = method_args.rstrip(')')
-            if method_args:
-                method = f'{method_name}(ctx, {method_args})'
-            else:
-                method = f'{method_name}(ctx)'
         else:
-            method = f'{method}(ctx)'
+            method_name = method
+            method_args = ', '.join(p[0] for p in params)
+        # Prepend yos_ and add ctx
+        if method_args:
+            call = f'yos_{method_name}(ctx, {method_args})'
+        else:
+            call = f'yos_{method_name}(ctx)'
         if noreturn:
-            lines.append(f'    ctx->runtime->{method};')
+            lines.append(f'    {call};')
             lines.append(f'    m3ApiTrap("{name}");')
         elif returns == 'void':
-            lines.append(f'    ctx->runtime->{method};')
+            lines.append(f'    {call};')
             lines.append('    m3ApiSuccess();')
         else:
-            lines.append(f'    auto _r = ctx->runtime->{method};')
+            lines.append(f'    {ret_ctype} _r = {call};')
             lines.append('    m3ApiReturn(_r);')
 
     lines.append('}')
@@ -284,15 +282,7 @@ def generate_link_entry(func, namespace):
     param_sig = ''.join(m3_sig(ptype) for _, ptype in params)
     sig = f'{ret_sig}({param_sig})'
 
-    return f'm3_LinkRawFunction(module, "{namespace}", "{name}", "{sig}", {namespace}_{name});'
-
-def generate_handler(func, namespace):
-    """Generate handler code. Returns None for handlers that are provided externally."""
-    handler = func.get('handler', 'stub')
-    # extern: handler is provided in syscalls.cpp, skip generation
-    if handler == 'extern':
-        return None
-    return generate_m3_handler(func, namespace)
+    return f'm3_LinkRawFunction(module, "{namespace}", "{name}", "{sig}", handler_{namespace}_{name});'
 
 def main():
     if len(sys.argv) < 3:
@@ -458,11 +448,17 @@ static void __varargs_pack_printf(const char* fmt, __builtin_va_list ap, VarArgP
     wasm_c.extend(wrappers)
     (output_dir / 'wasm-stubs' / 'yos-generated.c').write_text('\n'.join(wasm_c) + '\n')
 
-    # Native handlers
-    native = [header, '''#pragma once
+    # Native handlers - PURE C
+    native = [header, '''#ifndef YOS_HANDLERS_GENERATED_H
+#define YOS_HANDLERS_GENERATED_H
+
 #include "wasm3.h"
 #include "m3_env.h"
-#include "wasm-types.hpp"
+#include "yos-types.h"
+#include "yos-vfs.h"
+#include "yos-process.h"
+#include "yos-runtime.h"
+#include "yos-log.h"
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -479,17 +475,14 @@ static void __varargs_pack_printf(const char* fmt, __builtin_va_list ap, VarArgP
 #include <string.h>
 #include <libgen.h>
 
-namespace yos {
-
-// Forward declaration - implemented in runtime
-struct ProcessContext;
-ProcessContext* getProcessContext(IM3Runtime runtime);
+// Debug macro for syscall tracing
+#define YOS_DBG(fmt, ...) YOS_TRACE(fmt, ##__VA_ARGS__)
 
 ''']
     # Add forward declarations for extern handlers
     for func, ns in all_funcs:
         if func.get('handler') == 'extern':
-            native.append(f'm3ApiRawFunction({ns}_{func["name"]});')
+            native.append(f'm3ApiRawFunction(handler_{ns}_{func["name"]});')
     native.append('')
 
     for func, ns in all_funcs:
@@ -497,58 +490,20 @@ ProcessContext* getProcessContext(IM3Runtime runtime);
         if handler:  # None for wasm_impl
             native.append(handler)
             native.append('')
-    native.append('} // namespace yos')
+
+    native.append('#endif // YOS_HANDLERS_GENERATED_H')
 
     (output_dir / 'src').mkdir(parents=True, exist_ok=True)
-    (output_dir / 'src' / 'yos-handlers-generated.hpp').write_text('\n'.join(native) + '\n')
+    (output_dir / 'src' / 'yos-handlers-generated.h').write_text('\n'.join(native) + '\n')
 
-    # Varargs header for native side (if any variadic functions)
-    if variadic_funcs:
-        varargs_h = [header, '''#pragma once
-#include <cstdint>
+    # Link table - PURE C
+    link = [header, '''#ifndef YOS_LINK_GENERATED_H
+#define YOS_LINK_GENERATED_H
 
-namespace yos {
-
-// Vararg type tags
-constexpr int VARG_END    = 0;
-constexpr int VARG_INT    = 1;
-constexpr int VARG_LONG   = 2;
-constexpr int VARG_STR    = 3;
-constexpr int VARG_PTR    = 4;
-constexpr int VARG_UINT   = 5;
-constexpr int VARG_ULONG  = 6;
-constexpr int VARG_CHAR   = 7;
-constexpr int VARG_MAX    = 16;
-
-// Function IDs for variadic functions''']
-        for idx, (func, ns) in enumerate(variadic_funcs):
-            varargs_h.append(f'constexpr int VFUNC_{func["name"].upper()} = {idx + 1};')
-        # Add valist functions with custom vfunc_ids
-        valist_funcs = [(f, ns) for f, ns in all_funcs if f.get('wasm_valist')]
-        for func, ns in valist_funcs:
-            vfunc_id = func.get('vfunc_id', 0)
-            # Only add if it's a new ID (not already covered by variadic funcs)
-            if vfunc_id > len(variadic_funcs):
-                varargs_h.append(f'constexpr int VFUNC_{func["name"].upper()} = {vfunc_id};')
-        varargs_h.append('''
-// Packed varargs structure (must match WASM side)
-struct VarArgPack {
-    uint8_t types[VARG_MAX];
-    uint64_t values[VARG_MAX];
-};
-
-} // namespace yos
-''')
-        (output_dir / 'src' / 'yos-varargs-generated.hpp').write_text('\n'.join(varargs_h) + '\n')
-
-    # Link table
-    link = [header, '''#pragma once
 #include "wasm3.h"
-#include "yos-handlers-generated.hpp"
+#include "yos-handlers-generated.h"
 
-namespace yos {
-
-inline void linkGeneratedSyscalls(IM3Module module) {
+static inline void link_yos_functions(IM3Module module) {
 ''']
     for func, ns in all_funcs:
         entry = generate_link_entry(func, ns)
@@ -556,8 +511,8 @@ inline void linkGeneratedSyscalls(IM3Module module) {
             link.append('    ' + entry)
     link.append('}')
     link.append('')
-    link.append('} // namespace yos')
-    (output_dir / 'src' / 'yos-link-generated.hpp').write_text('\n'.join(link) + '\n')
+    link.append('#endif // YOS_LINK_GENERATED_H')
+    (output_dir / 'src' / 'yos-link-generated.h').write_text('\n'.join(link) + '\n')
 
     print(f"Generated {len(all_funcs)} syscalls to {output_dir}")
 

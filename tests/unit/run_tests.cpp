@@ -17,7 +17,7 @@
 
 #include "wasm3.h"
 #include "m3_env.h"
-#include "wasm-types.hpp"
+#include "yos-types.h"
 
 // Simple test context - no VFS, just pass through to host
 struct TestContext {
@@ -108,7 +108,7 @@ m3ApiRawFunction(test_close) {
     m3ApiReturn(ret < 0 ? -errno : 0);
 }
 
-static void stat_to_wasm(const struct stat& src, yos::wasm_stat& dst) {
+static void stat_to_wasm(const struct stat& src, wasm_stat_t& dst) {
     dst.wasm_st_dev = static_cast<uint32_t>(src.st_dev);
     dst.wasm_st_ino = static_cast<uint32_t>(src.st_ino);
     dst.wasm_st_mode = static_cast<uint32_t>(src.st_mode);
@@ -131,7 +131,7 @@ static void stat_to_wasm(const struct stat& src, yos::wasm_stat& dst) {
 m3ApiRawFunction(test_stat) {
     m3ApiReturnType(int32_t);
     m3ApiGetArgMem(const char*, path);
-    m3ApiGetArgMem(yos::wasm_stat*, statbuf);
+    m3ApiGetArgMem(wasm_stat_t*, statbuf);
 
     struct stat st;
     int ret = stat(path, &st);
@@ -176,7 +176,7 @@ m3ApiRawFunction(test_isatty) {
 m3ApiRawFunction(test_lstat) {
     m3ApiReturnType(int32_t);
     m3ApiGetArgMem(const char*, path);
-    m3ApiGetArgMem(yos::wasm_stat*, statbuf);
+    m3ApiGetArgMem(wasm_stat_t*, statbuf);
 
     struct stat st;
     int ret = lstat(path, &st);

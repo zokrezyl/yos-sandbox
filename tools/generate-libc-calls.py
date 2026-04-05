@@ -5,11 +5,18 @@ Output:
   - build/generated/libc-wrappers.c - C++ passthrough wrappers
   - build/generated/libc-wrappers.h - Header declarations
   - tests/unit/wasm-src/libc/ - One test file per function
+
+Hooks:
+  - Reads src/hooks.yaml to determine which functions call yos_* (hooked)
+  - vs native libc (passthrough)
 """
 
 import yaml
 import os
 import sys
+
+# Global set of hooked functions - loaded from hooks.yaml
+HOOKED_FUNCTIONS = set()
 
 # Default test values per type
 DEFAULT_VALUES = {
@@ -47,6 +54,32 @@ M3_SIG = {
     'func_ptr': 'i',  # function pointer is table index (i32)
     'void': 'v',
 }
+
+
+def load_hooks_yaml(path):
+    """Load hooks.yaml and return set of hooked function names"""
+    global HOOKED_FUNCTIONS
+    if not os.path.exists(path):
+        print(f"Warning: {path} not found, all functions will be passthrough")
+        return set()
+
+    with open(path) as f:
+        data = yaml.safe_load(f)
+
+    hooked = set()
+    for category, funcs in data.items():
+        if isinstance(funcs, list):
+            for func in funcs:
+                if isinstance(func, str):
+                    hooked.add(func)
+                elif isinstance(func, dict):
+                    # Handle dict format: {name: {return: value}}
+                    for name in func.keys():
+                        hooked.add(name)
+
+    HOOKED_FUNCTIONS = hooked
+    print(f"Loaded {len(hooked)} hooked functions from {path}")
+    return hooked
 
 
 def load_libc_yaml(path):
@@ -152,8 +185,11 @@ def generate_wrapper(func):
             c_type = c_type.split('[')[0].strip() + '*'
 
         # Function pointer params are table indices (i32) in WASM
-        # Mark them for special handling
-        is_func_ptr = '(*)' in c_type or '(*' in c_type
+        # Mark them for special handling - detect raw syntax and typedefs
+        # Be careful not to match struct types like cookie_io_functions_t
+        is_func_ptr = ('(*)' in c_type or '(*' in c_type or
+                      c_type.endswith('_function') or c_type.endswith('_fn') or
+                      c_type.endswith('_func') or c_type in ('__sighandler_t', 'sighandler_t'))
         if is_func_ptr:
             yaml_type = 'func_ptr'  # special marker
 
@@ -197,6 +233,9 @@ def generate_wrapper(func):
         param_sigs = ''.join([M3_SIG.get(p[1], 'i') for p in params])
     m3_sig = f"{ret_sig}({param_sigs})"
 
+    # Check if this function is hooked
+    is_hooked = name in HOOKED_FUNCTIONS
+
     # Build wrapper function
     lines = []
     lines.append(f'm3ApiRawFunction(libc_{name}) {{')
@@ -217,7 +256,11 @@ def generate_wrapper(func):
         # Handle returns as uint32_t (opaque handle stored as integer)
         lines.append(f'    m3ApiReturnType(uint32_t);')
     elif ret != 'void':
-        m3_ret = C_TYPES.get(ret, 'int32_t')
+        # Use actual C return type for pointers to avoid type mismatches
+        if ret in ('str', 'ptr'):
+            m3_ret = ret_c  # Use actual C type
+        else:
+            m3_ret = C_TYPES.get(ret, 'int32_t')
         lines.append(f'    m3ApiReturnType({m3_ret});')
 
     # Get arguments using actual C types
@@ -238,9 +281,16 @@ def generate_wrapper(func):
         else:
             lines.append(f'    m3ApiGetArg({c_type}, {pname});')
 
+    # For hooked functions, get the context from wasm3 runtime user data
+    # Use _yos_ctx to avoid conflict with wasm3's _ctx parameter
+    if is_hooked:
+        lines.append('    yos_exec_ctx_t* _yos_ctx = (yos_exec_ctx_t*)m3_GetUserData(runtime);')
+
     # Call native function and handle return
     # Build arg expressions with special handling
     arg_exprs = []
+    if is_hooked:
+        arg_exprs.append('_yos_ctx')  # hooked functions take ctx as first arg
     for p in params:
         pname, yaml_type, c_type = p
         if pname in complex_params:
@@ -251,8 +301,8 @@ def generate_wrapper(func):
             arg_exprs.append(pname)
     args = ', '.join(arg_exprs)
 
-    # Some function names need special handling
-    call_name = name
+    # Hooked functions call yos_<name>, passthrough calls native <name>
+    call_name = f'yos_{name}' if is_hooked else name
 
     if struct_return:
         if struct_return.get('singleton'):
@@ -268,7 +318,11 @@ def generate_wrapper(func):
             lines.append(f'    m3ApiSuccess();')
     elif ret == 'void':
         lines.append(f'    {call_name}({args});')
-        lines.append(f'    m3ApiSuccess();')
+        # Functions that never return should trap instead of returning
+        if name in ('_exit', 'exit', '_Exit', 'abort', 'quick_exit'):
+            lines.append(f'    m3ApiTrap("exit");')
+        else:
+            lines.append(f'    m3ApiSuccess();')
     elif ret == 'handle':
         lines.append(f'    {ret_c} _result = {call_name}({args});')
         lines.append(f'    m3ApiReturn((uint32_t)(uintptr_t)_result);')
@@ -289,11 +343,17 @@ def generate_varargs_wrapper(func):
     """Generate GENERIC wrapper for ANY variadic function based on signature.
     Pattern: get fixed params + va_ptr, pack into array, call via trampoline.
     Calls the SAME function (printf calls printf, NOT vprintf).
+    Hooked varargs functions are NOT currently supported - they passthrough.
     """
     name = func['name']
     params = func['params']
     ret = func['returns']
     ret_c = func.get('returns_c', C_TYPES.get(ret, 'int'))
+
+    # Note: hooked varargs not yet supported, they always passthrough to native
+    is_hooked = name in HOOKED_FUNCTIONS
+    if is_hooked:
+        print(f"  Warning: varargs function {name} is hooked but varargs hooks not implemented, using passthrough")
 
     # Build m3 signature: fixed params + va_ptr (i32)
     param_sigs = ''.join([M3_SIG.get(p[1], 'i') for p in params])
@@ -314,7 +374,15 @@ def generate_varargs_wrapper(func):
         yaml_type = p[1]
         c_type = p[2] if len(p) > 2 else C_TYPES.get(yaml_type, 'int')
 
-        if yaml_type in ('str', 'ptr'):
+        # Detect function pointers (be careful not to match structs)
+        is_func_ptr = ('(*)' in c_type or '(*' in c_type or
+                      c_type.endswith('_function') or c_type.endswith('_fn') or
+                      c_type.endswith('_func') or c_type in ('__sighandler_t', 'sighandler_t'))
+
+        if is_func_ptr:
+            lines.append(f'    m3ApiGetArg(uint32_t, _{pname}_idx);')
+            lines.append(f'    (void)_{pname}_idx; // TODO: callback trampoline')
+        elif yaml_type in ('str', 'ptr'):
             lines.append(f'    m3ApiGetArgMem({c_type}, {pname});')
         elif yaml_type == 'handle':
             lines.append(f'    m3ApiGetArg(uint32_t, _{pname}_handle);')
@@ -335,7 +403,14 @@ def generate_varargs_wrapper(func):
     # Pack fixed params
     for p in params:
         pname = p[0]
-        lines.append(f'    _args[_argc++] = (uint64_t)(uintptr_t){pname};')
+        c_type = p[2] if len(p) > 2 else ''
+        is_func_ptr = ('(*)' in c_type or '(*' in c_type or
+                      'function' in c_type.lower() or c_type.endswith('_fn') or
+                      c_type.endswith('_func'))
+        if is_func_ptr:
+            lines.append(f'    _args[_argc++] = (uint64_t)(uintptr_t)NULL; // {pname} callback')
+        else:
+            lines.append(f'    _args[_argc++] = (uint64_t)(uintptr_t){pname};')
 
     # Pack varargs from WASM memory (each is 4 bytes in WASM, promote to 64-bit)
     lines.append('    uint32_t _va_off = 0;')
@@ -436,6 +511,10 @@ def generate_test(func):
     return '\n'.join(lines)
 
 def main():
+    # Load hooks configuration
+    hooks_yaml = 'src/hooks.yaml'
+    load_hooks_yaml(hooks_yaml)
+
     libc_yaml = 'build/generated/libc.yaml'
     if not os.path.exists(libc_yaml):
         print(f"Error: {libc_yaml} not found. Run extract-signatures.py first.", file=sys.stderr)
@@ -468,8 +547,10 @@ def main():
     used_headers = set()  # Collect headers for included functions
 
     for func in functions:
-        # Only wrap functions that are actually exported from glibc
-        if func['name'] not in glibc_exports:
+        # Hooked functions call yos_* - don't need glibc export
+        # Passthrough functions need to exist in glibc
+        is_hooked = func['name'] in HOOKED_FUNCTIONS
+        if not is_hooked and func['name'] not in glibc_exports:
             if 'not in glibc exports' not in skipped:
                 skipped['not in glibc exports'] = []
             skipped['not in glibc exports'].append(func['name'])
@@ -504,7 +585,10 @@ def main():
         f.write('#define __STDC_WANT_IEC_60559_TYPES_EXT__\n')
         f.write('#include "libc-wrappers.h"\n')
         f.write('#include "wasm3.h"\n')
-        f.write('#include "m3_env.h"\n\n')
+        f.write('#include "m3_env.h"\n')
+        f.write('#include "yos-runtime.h"\n')
+        f.write('#include "yos-vfs.h"\n')
+        f.write('#include "yos-process.h"\n\n')
         # Base headers that must come first
         f.write('#include <stddef.h>\n')
         f.write('#include <stdint.h>\n')

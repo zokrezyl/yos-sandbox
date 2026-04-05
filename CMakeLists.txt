@@ -49,25 +49,10 @@ CPMAddPackage(
     DOWNLOAD_ONLY YES
 )
 
-# Generate syscall glue code
+# Generated code output directory
 set(CODEGEN_DIR "${CMAKE_BINARY_DIR}/generated")
-set(SYSCALLS_YAML "${CMAKE_SOURCE_DIR}/src/codegen/syscalls.yaml")
-set(CODEGEN_SCRIPT "${CMAKE_SOURCE_DIR}/src/codegen/gen-syscalls.py")
-set(GENERATED_HANDLERS "${CODEGEN_DIR}/src/yos-handlers-generated.cpp")
-set(GENERATED_LINK "${CODEGEN_DIR}/src/yos-link-generated.cpp")
-set(GENERATED_WASM_H "${CODEGEN_DIR}/wasm-stubs/yos-generated.h")
-set(GENERATED_WASM_C "${CODEGEN_DIR}/wasm-stubs/yos-generated.c")
 
 find_program(UV_TOOL uv REQUIRED)
-
-add_custom_command(
-    OUTPUT ${GENERATED_HANDLERS} ${GENERATED_LINK} ${GENERATED_WASM_H} ${GENERATED_WASM_C}
-    COMMAND ${UV_TOOL} run --with pyyaml python3 ${CODEGEN_SCRIPT} ${SYSCALLS_YAML} ${CODEGEN_DIR}
-    DEPENDS ${SYSCALLS_YAML} ${CODEGEN_SCRIPT}
-    COMMENT "Generating syscall glue code"
-)
-
-add_custom_target(generate_syscalls DEPENDS ${GENERATED_HANDLERS} ${GENERATED_LINK})
 
 # Generate libc wrappers from Linux headers
 set(LIBC_YAML "${CODEGEN_DIR}/libc.yaml")
@@ -108,18 +93,21 @@ add_custom_command(
     COMMAND /usr/bin/gcc -std=c11 -O2
         -I${wasm3_SOURCE_DIR}/source
         -I${CMAKE_SOURCE_DIR}/src
+        -I${CODEGEN_DIR}
         -o ${CMAKE_BINARY_DIR}/smoke_runner
         ${CMAKE_SOURCE_DIR}/tools/smoke-runner.c
         ${LIBC_WRAPPERS_C}
+        ${CMAKE_SOURCE_DIR}/src/yos-runtime.c
         ${CMAKE_SOURCE_DIR}/src/varargs_trampoline.S
         $<TARGET_FILE:wasm3>
         -lm -lpthread -ldl -lcrypt -lresolv
     DEPENDS generate_libc wasm3
         ${CMAKE_SOURCE_DIR}/tools/smoke-runner.c
+        ${CMAKE_SOURCE_DIR}/src/yos-runtime.c
         ${CMAKE_SOURCE_DIR}/src/varargs_trampoline.S
     COMMENT "Building smoke test runner with system gcc"
 )
-add_custom_target(smoke_runner DEPENDS ${CMAKE_BINARY_DIR}/smoke_runner)
+add_custom_target(build_smoke_runner DEPENDS ${CMAKE_BINARY_DIR}/smoke_runner)
 
 # Custom target to build all smoke test .wasm files and run tests
 add_custom_target(smoke_tests
@@ -127,24 +115,25 @@ add_custom_target(smoke_tests
         -DSMOKE_TEST_DIR=${SMOKE_TEST_DIR}
         -DRUNNER=${CMAKE_BINARY_DIR}/smoke_runner
         -P ${CMAKE_SOURCE_DIR}/cmake/run-smoke-tests.cmake
-    DEPENDS smoke_runner generate_libc
+    DEPENDS build_smoke_runner generate_libc
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     COMMENT "Running smoke tests"
 )
 
-# YOS runtime (host)
+# YOS runtime (host) - pure C
 add_executable(yos
-    src/main.cpp
-    src/process.cpp
-    src/procfs.cpp
-    src/runtime.cpp
-    src/syscalls.cpp
-    src/vfs.cpp
-    src/hostfs.cpp
+    src/yos-main.c
+    src/yos-exec-ctx.c
+    src/yos-process.c
+    src/yos-vfs.c
+    src/yos-runtime.c
+    src/yos-log.c
+    src/varargs_trampoline.S
+    ${LIBC_WRAPPERS_C}
 )
-add_dependencies(yos generate_syscalls)
-target_include_directories(yos PRIVATE src ${wasm3_SOURCE_DIR}/source ${CODEGEN_DIR}/src)
-target_link_libraries(yos PRIVATE wasm3 pthread)
+add_dependencies(yos generate_libc)
+target_include_directories(yos PRIVATE src ${wasm3_SOURCE_DIR}/source ${CODEGEN_DIR})
+target_link_libraries(yos PRIVATE wasm3 pthread m)
 
 # Test WASM modules: compile .wat -> .wasm via wat2wasm
 find_program(WAT2WASM wat2wasm REQUIRED)
@@ -182,9 +171,7 @@ add_custom_command(
         ${CMAKE_SOURCE_DIR}/wasm-stubs/yos-stubs.c
         ${CMAKE_SOURCE_DIR}/wasm-stubs/yos-stubs.h
         ${CMAKE_SOURCE_DIR}/wasm-stubs/wasm-compat.h
-        ${CODEGEN_DIR}/wasm-stubs/yos-generated.c
-        ${CODEGEN_DIR}/wasm-stubs/yos-generated.h
-        generate_syscalls
+        generate_libc
     COMMENT "Building wasm programs"
 )
 

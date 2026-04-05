@@ -30,11 +30,10 @@ foreach(src ${TEST_SOURCES})
         continue()
     endif()
 
-    # Run test with timeout
+    # Run test with timeout - use timeout command to reliably kill hanging tests
     execute_process(
-        COMMAND ${RUNNER} ${wasm}
+        COMMAND timeout --kill-after=1s 2s ${RUNNER} ${wasm}
         RESULT_VARIABLE run_result
-        TIMEOUT 2
         OUTPUT_QUIET
         ERROR_QUIET
     )

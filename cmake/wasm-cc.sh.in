@@ -19,7 +19,7 @@ done
 # Add stubs only for final linking (not compile-only or relocatable)
 LINK_OBJS=""
 if [ "$IS_COMPILE" = "0" ] && [ "$IS_RELOCATABLE" = "0" ]; then
-    LINK_OBJS="@BB_BUILD@/yos-stubs.o @BB_BUILD@/yos-generated.o"
+    LINK_OBJS="@BB_BUILD@/yos-stubs.o"
 fi
 
 exec @WASI_CC_ABS@ --target=wasm32 \

@@ -1,0 +1,119 @@
+# YOS Hook Configuration - Linux Host Platform
+# Functions listed here call yos_<func>() instead of native libc
+# Everything NOT listed: passthrough to libc
+#
+# IMPORTANT: No silent stubs! Unimplemented functions must:
+# 1. Log YOS_ERROR with function name and args
+# 2. Return -ENOSYS (or appropriate error)
+
+process:
+  - fork
+  - vfork
+  - execve
+  - _exit
+  - exit
+  - getpid
+  - getppid
+  - getpgrp
+  - setpgid
+  - setsid
+  - getsid
+  - wait
+  - waitpid
+  - wait3
+  - wait4
+  - kill
+  - raise
+
+filesystem:
+  - open
+  - openat
+  - close
+  - read
+  - write
+  - lseek
+  - stat
+  - lstat
+  - fstat
+  - fstatat
+  - access
+  - faccessat
+  - dup
+  - dup2
+  - dup3
+  - pipe
+  - pipe2
+  - fcntl
+  - ioctl
+  - ftruncate
+  - fsync
+  - fdatasync
+  - chdir
+  - fchdir
+  - getcwd
+  - mkdir
+  - mkdirat
+  - rmdir
+  - unlink
+  - unlinkat
+  - link
+  - linkat
+  - symlink
+  - symlinkat
+  - readlink
+  - readlinkat
+  - rename
+  - renameat
+  - chmod
+  - fchmod
+  - fchmodat
+  - chown
+  - fchown
+  - fchownat
+  - lchown
+  - umask
+  - isatty
+
+directory:
+  - opendir
+  - readdir
+  - closedir
+  - rewinddir
+  - seekdir
+  - telldir
+  - getdents
+  - getdents64
+
+memory:
+  - sbrk
+  - brk
+  - mmap
+  - munmap
+  - mprotect
+  - mremap
+
+signals:
+  - signal
+  - sigaction
+  - sigprocmask
+  - sigemptyset
+  - sigfillset
+  - sigaddset
+  - sigdelset
+  - sigismember
+  - sigpending
+  - sigsuspend
+
+user:
+  - getuid
+  - geteuid
+  - getgid
+  - getegid
+  - setuid
+  - seteuid
+  - setgid
+  - setegid
+  - setreuid
+  - setregid
+  - getgroups
+  - setgroups

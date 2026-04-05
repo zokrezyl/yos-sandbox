@@ -85,15 +85,15 @@ add_executable(run_unit_tests
     run_tests.cpp
 )
 
-target_link_libraries(run_unit_tests PRIVATE wasm3)
+target_link_libraries(run_unit_tests PRIVATE wasm3 m)
 target_include_directories(run_unit_tests PRIVATE
-    ${CMAKE_SOURCE_DIR}/external/wasm3/source
+    ${wasm3_SOURCE_DIR}/source
     ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_BINARY_DIR}/generated
+    ${CODEGEN_DIR}
 )
 
 # Make test runner depend on WASM files
-add_dependencies(run_unit_tests unit_test_wasm generate_syscalls)
+add_dependencies(run_unit_tests unit_test_wasm generate_libc)
 
 # CTest integration (enable_testing() called from top-level CMakeLists.txt)
 foreach(TEST_NAME ${UNIT_TESTS})
@@ -119,5 +119,81 @@ target_compile_options(test_varargs_trampoline PRIVATE -std=c11 -O2 -Wall)
 add_test(
     NAME varargs_trampoline
     COMMAND test_varargs_trampoline
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# YOS VFS unit test
+add_executable(test_yos_vfs
+    test_yos_vfs.c
+    ${CMAKE_SOURCE_DIR}/src/yos-vfs.c
+    ${CMAKE_SOURCE_DIR}/src/yos-log.c
+)
+
+target_include_directories(test_yos_vfs PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_compile_options(test_yos_vfs PRIVATE -std=c11 -O2 -Wall)
+target_link_libraries(test_yos_vfs PRIVATE pthread)
+
+add_test(
+    NAME yos_vfs
+    COMMAND test_yos_vfs
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# YOS Process unit test
+add_executable(test_yos_process
+    test_yos_process.c
+    ${CMAKE_SOURCE_DIR}/src/yos-process.c
+    ${CMAKE_SOURCE_DIR}/src/yos-exec-ctx.c
+    ${CMAKE_SOURCE_DIR}/src/yos-vfs.c
+    ${CMAKE_SOURCE_DIR}/src/yos-runtime.c
+    ${CMAKE_SOURCE_DIR}/src/yos-log.c
+    ${CMAKE_SOURCE_DIR}/src/varargs_trampoline.S
+    ${LIBC_WRAPPERS_C}
+)
+
+add_dependencies(test_yos_process generate_libc)
+target_include_directories(test_yos_process PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${wasm3_SOURCE_DIR}/source
+    ${CODEGEN_DIR}
+)
+
+target_compile_options(test_yos_process PRIVATE -std=c11 -O2 -Wall)
+target_link_libraries(test_yos_process PRIVATE wasm3 pthread m)
+
+add_test(
+    NAME yos_process
+    COMMAND test_yos_process
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# YOS Exec Context unit test
+add_executable(test_yos_exec_ctx
+    test_yos_exec_ctx.c
+    ${CMAKE_SOURCE_DIR}/src/yos-exec-ctx.c
+    ${CMAKE_SOURCE_DIR}/src/yos-process.c
+    ${CMAKE_SOURCE_DIR}/src/yos-vfs.c
+    ${CMAKE_SOURCE_DIR}/src/yos-runtime.c
+    ${CMAKE_SOURCE_DIR}/src/yos-log.c
+    ${CMAKE_SOURCE_DIR}/src/varargs_trampoline.S
+    ${LIBC_WRAPPERS_C}
+)
+
+add_dependencies(test_yos_exec_ctx generate_libc)
+target_include_directories(test_yos_exec_ctx PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${wasm3_SOURCE_DIR}/source
+    ${CODEGEN_DIR}
+)
+
+target_compile_options(test_yos_exec_ctx PRIVATE -std=c11 -O2 -Wall)
+target_link_libraries(test_yos_exec_ctx PRIVATE wasm3 pthread m)
+
+add_test(
+    NAME yos_exec_ctx
+    COMMAND test_yos_exec_ctx
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
