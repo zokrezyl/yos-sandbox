@@ -412,7 +412,10 @@ def generate_varargs_wrapper(func):
     if is_hooked:
         # Hooked varargs: get context, extract first vararg, call yos_*
         lines.append('    yos_exec_ctx_t* _yos_ctx = (yos_exec_ctx_t*)m3_GetUserData(runtime);')
-        lines.append('    int _va_arg0 = (_va_ptr && _wasm_mem) ? *(int*)(_wasm_mem + _va_ptr) : 0;')
+        # Extract vararg as uint32_t (could be int or pointer offset)
+        lines.append('    uint32_t _va_arg0_raw = (_va_ptr && _wasm_mem) ? *(uint32_t*)(_wasm_mem + _va_ptr) : 0;')
+        # Convert to pointer if needed (WASM offset -> host pointer)
+        lines.append('    void* _va_arg0_ptr = (_va_arg0_raw && _wasm_mem) ? (void*)(_wasm_mem + _va_arg0_raw) : NULL;')
 
         # Build call to yos_* with fixed params + one vararg
         arg_exprs = ['_yos_ctx']
@@ -425,7 +428,12 @@ def generate_varargs_wrapper(func):
                 arg_exprs.append('NULL')
             else:
                 arg_exprs.append(pname)
-        arg_exprs.append('_va_arg0')
+        # Use appropriate vararg type based on function
+        # ioctl, mremap need pointer; openat needs int
+        if name in ('ioctl', 'mremap'):
+            arg_exprs.append('_va_arg0_ptr')
+        else:
+            arg_exprs.append('(int)_va_arg0_raw')
         args = ', '.join(arg_exprs)
 
         if ret == 'void':
