@@ -350,10 +350,7 @@ def generate_varargs_wrapper(func):
     ret = func['returns']
     ret_c = func.get('returns_c', C_TYPES.get(ret, 'int'))
 
-    # Note: hooked varargs not yet supported, they always passthrough to native
     is_hooked = name in HOOKED_FUNCTIONS
-    if is_hooked:
-        print(f"  Warning: varargs function {name} is hooked but varargs hooks not implemented, using passthrough")
 
     # Build m3 signature: fixed params + va_ptr (i32)
     param_sigs = ''.join([M3_SIG.get(p[1], 'i') for p in params])
@@ -412,21 +409,47 @@ def generate_varargs_wrapper(func):
         else:
             lines.append(f'    _args[_argc++] = (uint64_t)(uintptr_t){pname};')
 
-    # Pack varargs from WASM memory (each is 4 bytes in WASM, promote to 64-bit)
-    lines.append('    uint32_t _va_off = 0;')
-    lines.append('    for (int _i = 0; _i < 16 && _argc < 32; _i++) {')
-    lines.append('        uint32_t _v = *(uint32_t*)(_wasm_mem + _va_ptr + _va_off);')
-    lines.append('        _args[_argc++] = (uint64_t)_v;')
-    lines.append('        _va_off += 4;')
-    lines.append('    }')
+    if is_hooked:
+        # Hooked varargs: get context, extract first vararg, call yos_*
+        lines.append('    yos_exec_ctx_t* _yos_ctx = (yos_exec_ctx_t*)m3_GetUserData(runtime);')
+        lines.append('    int _va_arg0 = (_va_ptr && _wasm_mem) ? *(int*)(_wasm_mem + _va_ptr) : 0;')
 
-    # Call via trampoline
-    if ret == 'void':
-        lines.append(f'    call_native_varargs((void*){name}, _args, _argc);')
-        lines.append('    m3ApiSuccess();')
+        # Build call to yos_* with fixed params + one vararg
+        arg_exprs = ['_yos_ctx']
+        for p in params:
+            pname = p[0]
+            c_type = p[2] if len(p) > 2 else ''
+            is_func_ptr = ('(*)' in c_type or '(*' in c_type or
+                          c_type.endswith('_function') or c_type.endswith('_fn') or c_type.endswith('_func'))
+            if is_func_ptr:
+                arg_exprs.append('NULL')
+            else:
+                arg_exprs.append(pname)
+        arg_exprs.append('_va_arg0')
+        args = ', '.join(arg_exprs)
+
+        if ret == 'void':
+            lines.append(f'    yos_{name}({args});')
+            lines.append('    m3ApiSuccess();')
+        else:
+            lines.append(f'    {ret_c} _result = yos_{name}({args});')
+            lines.append(f'    m3ApiReturn(_result);')
     else:
-        lines.append(f'    {ret_c} _result = ({ret_c})(uintptr_t)call_native_varargs((void*){name}, _args, _argc);')
-        lines.append(f'    m3ApiReturn(_result);')
+        # Pack varargs from WASM memory (each is 4 bytes in WASM, promote to 64-bit)
+        lines.append('    uint32_t _va_off = 0;')
+        lines.append('    for (int _i = 0; _i < 16 && _argc < 32; _i++) {')
+        lines.append('        uint32_t _v = *(uint32_t*)(_wasm_mem + _va_ptr + _va_off);')
+        lines.append('        _args[_argc++] = (uint64_t)_v;')
+        lines.append('        _va_off += 4;')
+        lines.append('    }')
+
+        # Call via trampoline
+        if ret == 'void':
+            lines.append(f'    call_native_varargs((void*){name}, _args, _argc);')
+            lines.append('    m3ApiSuccess();')
+        else:
+            lines.append(f'    {ret_c} _result = ({ret_c})(uintptr_t)call_native_varargs((void*){name}, _args, _argc);')
+            lines.append(f'    m3ApiReturn(_result);')
 
     lines.append('}')
     return '\n'.join(lines), m3_sig, False, None
