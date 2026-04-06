@@ -49,6 +49,10 @@ m3ApiRawFunction(test_exit) {
     m3ApiTrap(m3Err_trapExit);
 }
 
+// Shared heap state for sbrk/brk
+static uint32_t g_heapPtr = 0;
+static uint32_t g_heapBase = 4096;  // Default, may be overwritten by __heap_base
+
 m3ApiRawFunction(test_sbrk) {
     m3ApiReturnType(uint32_t);
     m3ApiGetArg(int32_t, increment);
@@ -56,28 +60,223 @@ m3ApiRawFunction(test_sbrk) {
     // Get current memory
     uint32_t memSize = 0;
     uint8_t* mem = m3_GetMemory(runtime, &memSize, 0);
+    (void)mem;
 
-    // Use a static heap pointer within WASM memory
-    // Start heap at 1KB into memory (after any potential data)
-    static uint32_t heapPtr = 0;
-    if (heapPtr == 0) {
-        heapPtr = 4096;  // Start heap at 4KB
+    // Initialize heap pointer on first call
+    if (g_heapPtr == 0) {
+        g_heapPtr = g_heapBase;
     }
 
     if (increment == 0) {
-        m3ApiReturn(heapPtr);
+        m3ApiReturn(g_heapPtr);
     }
 
-    uint32_t oldPtr = heapPtr;
-    uint32_t newPtr = heapPtr + increment;
+    uint32_t oldPtr = g_heapPtr;
+    uint32_t newPtr = g_heapPtr + increment;
 
-    // Check bounds
-    if (newPtr > memSize || newPtr < heapPtr) {
+    // Check bounds (also catches negative wraparound)
+    if (newPtr > memSize || (increment > 0 && newPtr < oldPtr)) {
         m3ApiReturn((uint32_t)-1);  // Out of memory
     }
 
-    heapPtr = newPtr;
+    g_heapPtr = newPtr;
     m3ApiReturn(oldPtr);
+}
+
+m3ApiRawFunction(test_brk) {
+    m3ApiReturnType(int32_t);
+    m3ApiGetArg(uint32_t, addr);
+
+    // Get current memory size
+    uint32_t memSize = 0;
+    uint8_t* mem = m3_GetMemory(runtime, &memSize, 0);
+    (void)mem;
+
+    // Initialize heap pointer on first call
+    if (g_heapPtr == 0) {
+        g_heapPtr = g_heapBase;
+    }
+
+    // brk(0) returns current break
+    if (addr == 0) {
+        m3ApiReturn((int32_t)g_heapPtr);
+    }
+
+    // Cannot go below heap base
+    if (addr < g_heapBase) {
+        m3ApiReturn(-1);  // ENOMEM
+    }
+
+    // Cannot exceed memory
+    if (addr > memSize) {
+        m3ApiReturn(-1);  // ENOMEM
+    }
+
+    g_heapPtr = addr;
+    m3ApiReturn(0);  // Success
+}
+
+// Simple malloc/free using bump allocator with free list
+// Block header: [size:4][next_free:4][data...]
+#define BLOCK_HEADER_SIZE 8
+#define BLOCK_USED_MARKER 0xFFFFFFFF
+
+static uint32_t g_freeList = 0;  // Head of free list (WASM offset)
+
+static inline uint32_t read32_at(uint8_t* mem, uint32_t offset) {
+    return *(uint32_t*)(mem + offset);
+}
+
+static inline void write32_at(uint8_t* mem, uint32_t offset, uint32_t value) {
+    *(uint32_t*)(mem + offset) = value;
+}
+
+m3ApiRawFunction(test_malloc) {
+    m3ApiReturnType(uint32_t);
+    m3ApiGetArg(uint32_t, size);
+
+    if (size == 0) m3ApiReturn(0);
+
+    uint32_t memSize = 0;
+    uint8_t* mem = m3_GetMemory(runtime, &memSize, 0);
+
+    if (g_heapPtr == 0) g_heapPtr = g_heapBase;
+
+    // Align size to 8 bytes
+    size = (size + 7) & ~7;
+
+    // Try free list first
+    uint32_t prev = 0;
+    uint32_t curr = g_freeList;
+    while (curr != 0) {
+        uint32_t blkSize = read32_at(mem, curr);
+        if (blkSize >= size) {
+            uint32_t next = read32_at(mem, curr + 4);
+            if (prev == 0) g_freeList = next;
+            else write32_at(mem, prev + 4, next);
+            write32_at(mem, curr + 4, BLOCK_USED_MARKER);
+            m3ApiReturn(curr + BLOCK_HEADER_SIZE);
+        }
+        prev = curr;
+        curr = read32_at(mem, curr + 4);
+    }
+
+    // Allocate new block
+    uint32_t total = BLOCK_HEADER_SIZE + size;
+    uint32_t oldHeap = g_heapPtr;
+    uint32_t newHeap = oldHeap + total;
+    if (newHeap > memSize || newHeap < oldHeap) m3ApiReturn(0);
+
+    g_heapPtr = newHeap;
+    write32_at(mem, oldHeap, size);
+    write32_at(mem, oldHeap + 4, BLOCK_USED_MARKER);
+    memset(mem + oldHeap + BLOCK_HEADER_SIZE, 0, size);
+    m3ApiReturn(oldHeap + BLOCK_HEADER_SIZE);
+}
+
+m3ApiRawFunction(test_free) {
+    m3ApiGetArg(uint32_t, ptr);
+
+    if (ptr == 0) m3ApiSuccess();
+
+    uint32_t memSize = 0;
+    uint8_t* mem = m3_GetMemory(runtime, &memSize, 0);
+
+    uint32_t block = ptr - BLOCK_HEADER_SIZE;
+    if (block >= memSize) m3ApiSuccess();
+
+    uint32_t marker = read32_at(mem, block + 4);
+    if (marker != BLOCK_USED_MARKER) m3ApiSuccess();  // double free or corruption
+
+    write32_at(mem, block + 4, g_freeList);
+    g_freeList = block;
+    m3ApiSuccess();
+}
+
+m3ApiRawFunction(test_calloc) {
+    m3ApiReturnType(uint32_t);
+    m3ApiGetArg(uint32_t, nmemb);
+    m3ApiGetArg(uint32_t, size);
+
+    uint32_t total = nmemb * size;
+    if (nmemb != 0 && total / nmemb != size) m3ApiReturn(0);  // overflow
+
+    // Our malloc already zeros memory
+    uint32_t memSize = 0;
+    uint8_t* mem = m3_GetMemory(runtime, &memSize, 0);
+
+    if (g_heapPtr == 0) g_heapPtr = g_heapBase;
+    total = (total + 7) & ~7;
+
+    uint32_t needed = BLOCK_HEADER_SIZE + total;
+    uint32_t oldHeap = g_heapPtr;
+    uint32_t newHeap = oldHeap + needed;
+    if (newHeap > memSize || newHeap < oldHeap) m3ApiReturn(0);
+
+    g_heapPtr = newHeap;
+    write32_at(mem, oldHeap, total);
+    write32_at(mem, oldHeap + 4, BLOCK_USED_MARKER);
+    memset(mem + oldHeap + BLOCK_HEADER_SIZE, 0, total);
+    m3ApiReturn(oldHeap + BLOCK_HEADER_SIZE);
+}
+
+m3ApiRawFunction(test_realloc) {
+    m3ApiReturnType(uint32_t);
+    m3ApiGetArg(uint32_t, ptr);
+    m3ApiGetArg(uint32_t, size);
+
+    uint32_t memSize = 0;
+    uint8_t* mem = m3_GetMemory(runtime, &memSize, 0);
+
+    if (ptr == 0) {
+        // realloc(NULL, size) = malloc(size)
+        if (size == 0) m3ApiReturn(0);
+        if (g_heapPtr == 0) g_heapPtr = g_heapBase;
+        size = (size + 7) & ~7;
+        uint32_t total = BLOCK_HEADER_SIZE + size;
+        uint32_t oldHeap = g_heapPtr;
+        uint32_t newHeap = oldHeap + total;
+        if (newHeap > memSize || newHeap < oldHeap) m3ApiReturn(0);
+        g_heapPtr = newHeap;
+        write32_at(mem, oldHeap, size);
+        write32_at(mem, oldHeap + 4, BLOCK_USED_MARKER);
+        memset(mem + oldHeap + BLOCK_HEADER_SIZE, 0, size);
+        m3ApiReturn(oldHeap + BLOCK_HEADER_SIZE);
+    }
+
+    if (size == 0) {
+        // realloc(ptr, 0) = free(ptr)
+        uint32_t block = ptr - BLOCK_HEADER_SIZE;
+        if (block < memSize) {
+            write32_at(mem, block + 4, g_freeList);
+            g_freeList = block;
+        }
+        m3ApiReturn(0);
+    }
+
+    uint32_t block = ptr - BLOCK_HEADER_SIZE;
+    uint32_t oldSize = read32_at(mem, block);
+
+    size = (size + 7) & ~7;
+    if (size <= oldSize) m3ApiReturn(ptr);  // fits in existing block
+
+    // Allocate new block
+    if (g_heapPtr == 0) g_heapPtr = g_heapBase;
+    uint32_t total = BLOCK_HEADER_SIZE + size;
+    uint32_t oldHeap = g_heapPtr;
+    uint32_t newHeap = oldHeap + total;
+    if (newHeap > memSize || newHeap < oldHeap) m3ApiReturn(0);
+
+    g_heapPtr = newHeap;
+    write32_at(mem, oldHeap, size);
+    write32_at(mem, oldHeap + 4, BLOCK_USED_MARKER);
+    memcpy(mem + oldHeap + BLOCK_HEADER_SIZE, mem + ptr, oldSize);
+
+    // Free old block
+    write32_at(mem, block + 4, g_freeList);
+    g_freeList = block;
+
+    m3ApiReturn(oldHeap + BLOCK_HEADER_SIZE);
 }
 
 m3ApiRawFunction(test_open) {
@@ -229,24 +428,90 @@ m3ApiRawFunction(test_closedir) {
 m3ApiRawFunction(test_printf) {
     m3ApiReturnType(int32_t);
     m3ApiGetArgMem(const char*, fmt);
-    // Simple printf - just output the format string for now
-    int len = printf("%s", fmt);
-    m3ApiReturn(len);
+    m3ApiGetArg(uint32_t, va_ptr);
+
+    uint32_t memSize = 0;
+    uint8_t* mem = m3_GetMemory(runtime, &memSize, 0);
+
+    // Simple implementation - handle %d and %s
+    char out[256];
+    int outIdx = 0;
+    int vaOff = 0;
+
+    for (const char* p = fmt; *p && outIdx < 255; p++) {
+        if (*p == '%' && *(p+1)) {
+            p++;
+            if (*p == 'd') {
+                int val = va_ptr ? *(int32_t*)(mem + va_ptr + vaOff) : 0;
+                vaOff += 4;
+                outIdx += snprintf(out + outIdx, 256 - outIdx, "%d", val);
+            } else if (*p == 's') {
+                uint32_t strPtr = va_ptr ? *(uint32_t*)(mem + va_ptr + vaOff) : 0;
+                vaOff += 4;
+                const char* str = strPtr ? (const char*)(mem + strPtr) : "(null)";
+                outIdx += snprintf(out + outIdx, 256 - outIdx, "%s", str);
+            } else if (*p == '%') {
+                out[outIdx++] = '%';
+            } else {
+                out[outIdx++] = '%';
+                out[outIdx++] = *p;
+            }
+        } else {
+            out[outIdx++] = *p;
+        }
+    }
+    out[outIdx] = 0;
+    printf("%s", out);
+    m3ApiReturn(outIdx);
 }
 
 m3ApiRawFunction(test_sprintf) {
     m3ApiReturnType(int32_t);
     m3ApiGetArgMem(char*, str);
     m3ApiGetArgMem(const char*, fmt);
-    // Simple sprintf - just copy format string
-    int len = sprintf(str, "%s", fmt);
-    m3ApiReturn(len);
+    m3ApiGetArg(uint32_t, va_ptr);
+
+    uint32_t memSize = 0;
+    uint8_t* mem = m3_GetMemory(runtime, &memSize, 0);
+
+    int outIdx = 0;
+    int vaOff = 0;
+
+    for (const char* p = fmt; *p && outIdx < 255; p++) {
+        if (*p == '%' && *(p+1)) {
+            p++;
+            if (*p == 'd') {
+                int val = va_ptr ? *(int32_t*)(mem + va_ptr + vaOff) : 0;
+                vaOff += 4;
+                outIdx += sprintf(str + outIdx, "%d", val);
+            } else if (*p == 's') {
+                uint32_t strPtr = va_ptr ? *(uint32_t*)(mem + va_ptr + vaOff) : 0;
+                vaOff += 4;
+                const char* s = strPtr ? (const char*)(mem + strPtr) : "(null)";
+                outIdx += sprintf(str + outIdx, "%s", s);
+            } else if (*p == '%') {
+                str[outIdx++] = '%';
+            } else {
+                str[outIdx++] = '%';
+                str[outIdx++] = *p;
+            }
+        } else {
+            str[outIdx++] = *p;
+        }
+    }
+    str[outIdx] = 0;
+    m3ApiReturn(outIdx);
 }
 
 void linkTestSyscalls(IM3Module module) {
     m3_LinkRawFunction(module, "yos", "write", "i(i*i)", test_write);
     m3_LinkRawFunction(module, "yos", "_exit", "v(i)", test_exit);
     m3_LinkRawFunction(module, "yos", "sbrk", "*(i)", test_sbrk);
+    m3_LinkRawFunction(module, "yos", "brk", "i(i)", test_brk);
+    m3_LinkRawFunction(module, "yos", "malloc", "*(i)", test_malloc);
+    m3_LinkRawFunction(module, "yos", "free", "v(i)", test_free);
+    m3_LinkRawFunction(module, "yos", "calloc", "*(ii)", test_calloc);
+    m3_LinkRawFunction(module, "yos", "realloc", "*(ii)", test_realloc);
     m3_LinkRawFunction(module, "yos", "open", "i(*ii)", test_open);
     m3_LinkRawFunction(module, "yos", "read", "i(i*i)", test_read);
     m3_LinkRawFunction(module, "yos", "close", "i(i)", test_close);
@@ -259,11 +524,21 @@ void linkTestSyscalls(IM3Module module) {
     m3_LinkRawFunction(module, "yos", "opendir", "i(*)", test_opendir);
     m3_LinkRawFunction(module, "yos", "readdir", "i(i)", test_readdir);
     m3_LinkRawFunction(module, "yos", "closedir", "i(i)", test_closedir);
-    m3_LinkRawFunction(module, "yos", "printf", "i(*)", test_printf);
-    m3_LinkRawFunction(module, "yos", "sprintf", "i(**)", test_sprintf);
+    m3_LinkRawFunction(module, "yos", "printf", "i(*i)", test_printf);
+    m3_LinkRawFunction(module, "yos", "sprintf", "i(**i)", test_sprintf);
 }
 
 int runTest(const char* wasmPath) {
+    // Reset per-test state
+    g_heapPtr = 0;
+    g_freeList = 0;
+    for (int i = 0; i < 16; i++) {
+        if (g_dirs[i]) {
+            closedir(g_dirs[i]);
+            g_dirs[i] = nullptr;
+        }
+    }
+
     // Load WASM file
     std::ifstream file(wasmPath, std::ios::binary | std::ios::ate);
     if (!file) {

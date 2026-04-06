@@ -212,6 +212,10 @@ def generate_wrapper(func):
     if name in ('flock',):  # flock conflicts with struct flock
         return None, None, False, "name conflicts with struct"
 
+    # Memory allocation functions need special wrappers (ptr = WASM offset, not host ptr)
+    if name in ('malloc', 'free', 'calloc', 'realloc'):
+        return None, None, False, "manual wrapper in yos-memory-wrappers.c"
+
 
 
 
@@ -619,7 +623,8 @@ def main():
         f.write('#include "m3_env.h"\n')
         f.write('#include "yos-runtime.h"\n')
         f.write('#include "yos-vfs.h"\n')
-        f.write('#include "yos-process.h"\n\n')
+        f.write('#include "yos-process.h"\n')
+        f.write('#include "yos-memory-wrappers.h"\n\n')
         # Base headers that must come first
         f.write('#include <stddef.h>\n')
         f.write('#include <stdint.h>\n')
@@ -655,6 +660,8 @@ extern void* call_native_varargs(void* func, void* args, int arg_count);
             f.write('\n\n')
 
         f.write('void linkLibcFunctions(IM3Module module) {\n')
+        f.write('    // Link manual memory wrappers first\n')
+        f.write('    linkMemoryFunctions(module);\n\n')
         for call in link_calls:
             f.write(call)
             f.write('\n')

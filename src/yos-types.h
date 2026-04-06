@@ -189,6 +189,7 @@ typedef struct yos_exec_ctx {
 
     // Memory management
     uint32_t heap_end;              // Program break for sbrk()
+    uint32_t free_list_head;        // Head of malloc free list (WASM offset)
 
     // === WASM RUNTIME (each process has its own instance) ===
 

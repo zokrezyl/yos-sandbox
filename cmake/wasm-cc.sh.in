@@ -46,5 +46,7 @@ exec @WASI_CC_ABS@ --target=wasm32 \
     -Wl,--export-all \
     -Wl,--whole-archive \
     -Wl,--allow-undefined \
+    -Wl,--stack-first \
+    -Wl,-z,stack-size=65536 \
     "${ARGS[@]}" \
     $LINK_OBJS

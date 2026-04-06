@@ -1,15 +1,15 @@
 // Test: printf/sprintf varargs functionality
 
-__attribute__((import_module("env"), import_name("write")))
+__attribute__((import_module("yos"), import_name("write")))
 int yos_write(int fd, const void* buf, unsigned int count);
 
-__attribute__((import_module("env"), import_name("_exit")))
+__attribute__((import_module("yos"), import_name("_exit")))
 void yos_exit(int status);
 
-__attribute__((import_module("env"), import_name("printf")))
+__attribute__((import_module("yos"), import_name("printf")))
 int yos_printf(const char* fmt, ...);
 
-__attribute__((import_module("env"), import_name("sprintf")))
+__attribute__((import_module("yos"), import_name("sprintf")))
 int yos_sprintf(char* str, const char* fmt, ...);
 
 void write_str(const char* s) {

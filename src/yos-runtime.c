@@ -201,11 +201,11 @@ int yos_varargs_call(yos_exec_ctx_t* ctx, int func_id, uint32_t arg1, uint32_t a
 // ============================================================================
 
 void* yos_sbrk(yos_exec_ctx_t* ctx, intptr_t increment) {
-    YOS_DEBUG("increment=%ld heap_end=%u", (long)increment, ctx->heap_end);
+    YOS_DEBUG("increment=%ld heap_end=%u mem_size=%zu", (long)increment, ctx->heap_end, ctx->wasm_mem_size);
 
     if (increment == 0) {
-        // Return current break
-        return ctx->wasm_memory ? (uint8_t*)ctx->wasm_memory + ctx->heap_end : NULL;
+        // Return current break as WASM offset (not host pointer!)
+        return (void*)(uintptr_t)ctx->heap_end;
     }
 
     uint32_t old_end = ctx->heap_end;
@@ -215,7 +215,7 @@ void* yos_sbrk(yos_exec_ctx_t* ctx, intptr_t increment) {
     if (new_end > ctx->wasm_mem_size || new_end < old_end) {
         YOS_ERROR("sbrk: out of memory (requested %u, have %zu)", new_end, ctx->wasm_mem_size);
         errno = ENOMEM;
-        return (void*)-1;
+        return (void*)(uintptr_t)-1;
     }
 
     ctx->heap_end = new_end;
@@ -225,23 +225,26 @@ void* yos_sbrk(yos_exec_ctx_t* ctx, intptr_t increment) {
         memset((uint8_t*)ctx->wasm_memory + old_end, 0, increment);
     }
 
-    YOS_TRACE("sbrk: %u -> %u", old_end, new_end);
-    return ctx->wasm_memory ? (uint8_t*)ctx->wasm_memory + old_end : NULL;
+    YOS_TRACE("sbrk: %u -> %u (returning WASM offset %u)", old_end, new_end, old_end);
+    // Return old break as WASM offset (not host pointer!)
+    return (void*)(uintptr_t)old_end;
 }
 
 int yos_brk(yos_exec_ctx_t* ctx, void* addr) {
-    YOS_DEBUG("addr=%p", addr);
+    // addr is a WASM offset, not a host pointer
+    uint32_t target = (uint32_t)(uintptr_t)addr;
+    YOS_DEBUG("addr=%u (WASM offset)", target);
 
     if (!ctx->wasm_memory) {
         return -ENOMEM;
     }
 
-    uintptr_t target = (uintptr_t)addr - (uintptr_t)ctx->wasm_memory;
     if (target > ctx->wasm_mem_size) {
+        YOS_ERROR("brk: target %u exceeds memory size %zu", target, ctx->wasm_mem_size);
         return -ENOMEM;
     }
 
-    ctx->heap_end = (uint32_t)target;
+    ctx->heap_end = target;
     return 0;
 }
 

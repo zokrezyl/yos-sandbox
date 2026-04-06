@@ -36,6 +36,10 @@ set(UNIT_TESTS
     test_write_exit
     test_sbrk
     test_sbrk_bounds
+    test_sbrk_negative
+    test_brk
+    test_heap_base
+    test_malloc
     test_open_read_close
     test_stat
     test_stat_offsets
@@ -149,6 +153,7 @@ add_executable(test_yos_process
     ${CMAKE_SOURCE_DIR}/src/yos-exec-ctx.c
     ${CMAKE_SOURCE_DIR}/src/yos-vfs.c
     ${CMAKE_SOURCE_DIR}/src/yos-runtime.c
+    ${CMAKE_SOURCE_DIR}/src/yos-memory.c
     ${CMAKE_SOURCE_DIR}/src/yos-log.c
     ${CMAKE_SOURCE_DIR}/src/varargs_trampoline.S
     ${LIBC_WRAPPERS_C}
@@ -177,6 +182,7 @@ add_executable(test_yos_exec_ctx
     ${CMAKE_SOURCE_DIR}/src/yos-process.c
     ${CMAKE_SOURCE_DIR}/src/yos-vfs.c
     ${CMAKE_SOURCE_DIR}/src/yos-runtime.c
+    ${CMAKE_SOURCE_DIR}/src/yos-memory.c
     ${CMAKE_SOURCE_DIR}/src/yos-log.c
     ${CMAKE_SOURCE_DIR}/src/varargs_trampoline.S
     ${LIBC_WRAPPERS_C}

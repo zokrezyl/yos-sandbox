@@ -91,6 +91,10 @@ memory:
   - munmap
   - mprotect
   - mremap
+  - malloc
+  - free
+  - calloc
+  - realloc
 
 signals:
   - signal

@@ -475,6 +475,280 @@ TEST(access) {
 }
 
 // ============================================================================
+// Unlink Tests
+// ============================================================================
+
+TEST(unlink_file) {
+    yos_exec_ctx_t* ctx = create_test_ctx();
+
+    char tmpfile[] = "/tmp/yos_test_unlink_XXXXXX";
+    int fd = mkstemp(tmpfile);
+    ASSERT(fd >= 0);
+    close(fd);
+
+    // Verify file exists
+    struct stat st;
+    ASSERT_EQ(stat(tmpfile, &st), 0);
+
+    // Unlink
+    int r = yos_unlink(ctx, tmpfile);
+    ASSERT_EQ(r, 0);
+
+    // Verify file is gone
+    ASSERT(stat(tmpfile, &st) < 0);
+
+    destroy_test_ctx(ctx);
+}
+
+TEST(unlink_nonexistent) {
+    yos_exec_ctx_t* ctx = create_test_ctx();
+
+    int r = yos_unlink(ctx, "/nonexistent/file/path");
+    ASSERT_EQ(r, -ENOENT);
+
+    destroy_test_ctx(ctx);
+}
+
+// ============================================================================
+// Fcntl Tests
+// ============================================================================
+
+TEST(fcntl_getfl) {
+    yos_exec_ctx_t* ctx = create_test_ctx();
+
+    char tmpfile[] = "/tmp/yos_test_fcntl_XXXXXX";
+    int host_fd = mkstemp(tmpfile);
+    close(host_fd);
+
+    int fd = yos_open(ctx, tmpfile, O_RDWR, 0);
+    ASSERT(fd >= 3);
+
+    int flags = yos_fcntl(ctx, fd, F_GETFL, 0);
+    ASSERT(flags >= 0);
+    ASSERT((flags & O_ACCMODE) == O_RDWR);
+
+    yos_close(ctx, fd);
+    unlink(tmpfile);
+    destroy_test_ctx(ctx);
+}
+
+TEST(fcntl_setfl) {
+    yos_exec_ctx_t* ctx = create_test_ctx();
+
+    char tmpfile[] = "/tmp/yos_test_fcntl_XXXXXX";
+    int host_fd = mkstemp(tmpfile);
+    close(host_fd);
+
+    int fd = yos_open(ctx, tmpfile, O_RDWR, 0);
+    ASSERT(fd >= 3);
+
+    // Set O_NONBLOCK
+    int r = yos_fcntl(ctx, fd, F_SETFL, O_NONBLOCK);
+    ASSERT_EQ(r, 0);
+
+    int flags = yos_fcntl(ctx, fd, F_GETFL, 0);
+    ASSERT(flags & O_NONBLOCK);
+
+    yos_close(ctx, fd);
+    unlink(tmpfile);
+    destroy_test_ctx(ctx);
+}
+
+TEST(fcntl_dupfd) {
+    yos_exec_ctx_t* ctx = create_test_ctx();
+
+    char tmpfile[] = "/tmp/yos_test_fcntl_dup_XXXXXX";
+    int host_fd = mkstemp(tmpfile);
+    close(host_fd);
+
+    int fd = yos_open(ctx, tmpfile, O_RDWR, 0);
+    ASSERT(fd >= 3);
+
+    // Dup to fd >= 10
+    int newfd = yos_fcntl(ctx, fd, F_DUPFD, 10);
+    ASSERT(newfd >= 10);
+
+    yos_close(ctx, fd);
+    yos_close(ctx, newfd);
+    unlink(tmpfile);
+    destroy_test_ctx(ctx);
+}
+
+// ============================================================================
+// Ftruncate Tests
+// ============================================================================
+
+TEST(ftruncate) {
+    yos_exec_ctx_t* ctx = create_test_ctx();
+
+    char tmpfile[] = "/tmp/yos_test_trunc_XXXXXX";
+    int host_fd = mkstemp(tmpfile);
+    write(host_fd, "hello world", 11);
+    close(host_fd);
+
+    int fd = yos_open(ctx, tmpfile, O_RDWR, 0);
+    ASSERT(fd >= 3);
+
+    // Truncate to 5 bytes
+    int r = yos_ftruncate(ctx, fd, 5);
+    ASSERT_EQ(r, 0);
+
+    struct stat st;
+    ASSERT_EQ(fstat(ctx->fds[fd].host_fd, &st), 0);
+    ASSERT_EQ(st.st_size, 5);
+
+    yos_close(ctx, fd);
+    unlink(tmpfile);
+    destroy_test_ctx(ctx);
+}
+
+// ============================================================================
+// Isatty Tests
+// ============================================================================
+
+TEST(isatty_not_tty) {
+    yos_exec_ctx_t* ctx = create_test_ctx();
+
+    char tmpfile[] = "/tmp/yos_test_isatty_XXXXXX";
+    int host_fd = mkstemp(tmpfile);
+    close(host_fd);
+
+    int fd = yos_open(ctx, tmpfile, O_RDONLY, 0);
+    ASSERT(fd >= 3);
+
+    // Regular file is not a tty
+    int r = yos_isatty(ctx, fd);
+    ASSERT_EQ(r, 0);
+
+    yos_close(ctx, fd);
+    unlink(tmpfile);
+    destroy_test_ctx(ctx);
+}
+
+// ============================================================================
+// Lseek Tests
+// ============================================================================
+
+TEST(lseek_set) {
+    yos_exec_ctx_t* ctx = create_test_ctx();
+
+    char tmpfile[] = "/tmp/yos_test_lseek_XXXXXX";
+    int host_fd = mkstemp(tmpfile);
+    write(host_fd, "0123456789", 10);
+    close(host_fd);
+
+    int fd = yos_open(ctx, tmpfile, O_RDONLY, 0);
+    ASSERT(fd >= 3);
+
+    off_t pos = yos_lseek(ctx, fd, 5, SEEK_SET);
+    ASSERT_EQ(pos, 5);
+
+    char buf[2];
+    ASSERT_EQ(yos_read(ctx, fd, buf, 1), 1);
+    ASSERT_EQ(buf[0], '5');
+
+    yos_close(ctx, fd);
+    unlink(tmpfile);
+    destroy_test_ctx(ctx);
+}
+
+TEST(lseek_end) {
+    yos_exec_ctx_t* ctx = create_test_ctx();
+
+    char tmpfile[] = "/tmp/yos_test_lseek_XXXXXX";
+    int host_fd = mkstemp(tmpfile);
+    write(host_fd, "0123456789", 10);
+    close(host_fd);
+
+    int fd = yos_open(ctx, tmpfile, O_RDONLY, 0);
+    ASSERT(fd >= 3);
+
+    off_t pos = yos_lseek(ctx, fd, -2, SEEK_END);
+    ASSERT_EQ(pos, 8);
+
+    char buf[2];
+    ASSERT_EQ(yos_read(ctx, fd, buf, 1), 1);
+    ASSERT_EQ(buf[0], '8');
+
+    yos_close(ctx, fd);
+    unlink(tmpfile);
+    destroy_test_ctx(ctx);
+}
+
+// ============================================================================
+// Link Tests
+// ============================================================================
+
+TEST(link_hardlink) {
+    yos_exec_ctx_t* ctx = create_test_ctx();
+
+    char tmpfile[] = "/tmp/yos_test_link_src_XXXXXX";
+    const char* linkpath = "/tmp/yos_test_link_dst";
+
+    int host_fd = mkstemp(tmpfile);
+    write(host_fd, "test", 4);
+    close(host_fd);
+    unlink(linkpath);
+
+    int r = yos_link(ctx, tmpfile, linkpath);
+    ASSERT_EQ(r, 0);
+
+    // Both should have same inode
+    struct stat st1, st2;
+    ASSERT_EQ(stat(tmpfile, &st1), 0);
+    ASSERT_EQ(stat(linkpath, &st2), 0);
+    ASSERT_EQ(st1.st_ino, st2.st_ino);
+
+    unlink(tmpfile);
+    unlink(linkpath);
+    destroy_test_ctx(ctx);
+}
+
+// ============================================================================
+// Chmod/Chown Tests
+// ============================================================================
+
+TEST(chmod) {
+    yos_exec_ctx_t* ctx = create_test_ctx();
+
+    char tmpfile[] = "/tmp/yos_test_chmod_XXXXXX";
+    int host_fd = mkstemp(tmpfile);
+    close(host_fd);
+
+    int r = yos_chmod(ctx, tmpfile, 0644);
+    ASSERT_EQ(r, 0);
+
+    struct stat st;
+    ASSERT_EQ(stat(tmpfile, &st), 0);
+    ASSERT_EQ(st.st_mode & 0777, 0644);
+
+    unlink(tmpfile);
+    destroy_test_ctx(ctx);
+}
+
+TEST(fchmod) {
+    yos_exec_ctx_t* ctx = create_test_ctx();
+
+    char tmpfile[] = "/tmp/yos_test_fchmod_XXXXXX";
+    int host_fd = mkstemp(tmpfile);
+    close(host_fd);
+
+    int fd = yos_open(ctx, tmpfile, O_RDWR, 0);
+    ASSERT(fd >= 3);
+
+    int r = yos_fchmod(ctx, fd, 0600);
+    ASSERT_EQ(r, 0);
+
+    struct stat st;
+    ASSERT_EQ(fstat(ctx->fds[fd].host_fd, &st), 0);
+    ASSERT_EQ(st.st_mode & 0777, 0600);
+
+    yos_close(ctx, fd);
+    unlink(tmpfile);
+    destroy_test_ctx(ctx);
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
@@ -519,6 +793,30 @@ int main(void) {
     // Permissions
     RUN_TEST(umask);
     RUN_TEST(access);
+    RUN_TEST(chmod);
+    RUN_TEST(fchmod);
+
+    // Unlink
+    RUN_TEST(unlink_file);
+    RUN_TEST(unlink_nonexistent);
+
+    // Fcntl
+    RUN_TEST(fcntl_getfl);
+    RUN_TEST(fcntl_setfl);
+    RUN_TEST(fcntl_dupfd);
+
+    // Ftruncate
+    RUN_TEST(ftruncate);
+
+    // Isatty
+    RUN_TEST(isatty_not_tty);
+
+    // Lseek
+    RUN_TEST(lseek_set);
+    RUN_TEST(lseek_end);
+
+    // Hard links
+    RUN_TEST(link_hardlink);
 
     printf("\n%d/%d tests passed\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;

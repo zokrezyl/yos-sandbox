@@ -98,6 +98,7 @@ add_custom_command(
         ${CMAKE_SOURCE_DIR}/tools/smoke-runner.c
         ${LIBC_WRAPPERS_C}
         ${CMAKE_SOURCE_DIR}/src/yos-runtime.c
+        ${CMAKE_SOURCE_DIR}/src/yos-memory.c
         ${CMAKE_SOURCE_DIR}/src/varargs_trampoline.S
         $<TARGET_FILE:wasm3>
         -lm -lpthread -ldl -lcrypt -lresolv
@@ -127,6 +128,8 @@ add_executable(yos
     src/yos-process.c
     src/yos-vfs.c
     src/yos-runtime.c
+    src/yos-memory.c
+    src/yos-memory-wrappers.c
     src/yos-log.c
     src/varargs_trampoline.S
     ${LIBC_WRAPPERS_C}
@@ -180,3 +183,4 @@ add_custom_target(wasm_programs ALL DEPENDS "${CMAKE_BINARY_DIR}/wasm/shell.wasm
 # Unit tests
 enable_testing()
 add_subdirectory(tests/unit)
+add_subdirectory(tests/integration)

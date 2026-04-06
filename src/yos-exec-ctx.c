@@ -143,6 +143,34 @@ static int exec_ctx_init_wasm(yos_exec_ctx_t* ctx, uint8_t* memory_snapshot, siz
     ctx->wasm_memory = m3_GetMemory(wrt, &mem_size, 0);
     ctx->wasm_mem_size = mem_size;
 
+    // Initialize heap_end from __heap_base global (if exported)
+    IM3Global heap_base_global = m3_FindGlobal(module, "__heap_base");
+    if (heap_base_global) {
+        M3TaggedValue val;
+        M3Result gres = m3_GetGlobal(heap_base_global, &val);
+        if (gres == m3Err_none && val.type == c_m3Type_i32) {
+            ctx->heap_end = val.value.i32;
+            YOS_DEBUG("heap_base from __heap_base: %u", ctx->heap_end);
+        }
+    }
+    // Fallback: try __data_end
+    if (ctx->heap_end == 0) {
+        IM3Global data_end_global = m3_FindGlobal(module, "__data_end");
+        if (data_end_global) {
+            M3TaggedValue val;
+            M3Result gres = m3_GetGlobal(data_end_global, &val);
+            if (gres == m3Err_none && val.type == c_m3Type_i32) {
+                ctx->heap_end = val.value.i32;
+                YOS_DEBUG("heap_base from __data_end: %u", ctx->heap_end);
+            }
+        }
+    }
+    // Fallback: use 4KB if nothing found
+    if (ctx->heap_end == 0) {
+        ctx->heap_end = 4096;
+        YOS_DEBUG("heap_base defaulted to: %u", ctx->heap_end);
+    }
+
     // Restore memory snapshot if provided (fork case)
     if (memory_snapshot && memory_size > 0) {
         if (mem_size >= memory_size) {
@@ -152,7 +180,7 @@ static int exec_ctx_init_wasm(yos_exec_ctx_t* ctx, uint8_t* memory_snapshot, siz
         free(memory_snapshot);  // We take ownership
     }
 
-    YOS_DEBUG("wasm initialized: mem=%p size=%u", ctx->wasm_memory, mem_size);
+    YOS_DEBUG("wasm initialized: mem=%p size=%u heap_end=%u", ctx->wasm_memory, mem_size, ctx->heap_end);
     return 0;
 }
 

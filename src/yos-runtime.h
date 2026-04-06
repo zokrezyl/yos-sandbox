@@ -27,6 +27,12 @@ int yos_munmap(yos_exec_ctx_t* ctx, void* addr, size_t length);
 int yos_mprotect(yos_exec_ctx_t* ctx, void* addr, size_t len, int prot);
 void* yos_mremap(yos_exec_ctx_t* ctx, void* old_addr, size_t old_size, size_t new_size, int flags, void* new_addr);
 
+// WASM-aware memory allocation (allocates within WASM linear memory)
+void* yos_malloc(yos_exec_ctx_t* ctx, size_t size);
+void  yos_free(yos_exec_ctx_t* ctx, void* ptr);
+void* yos_calloc(yos_exec_ctx_t* ctx, size_t nmemb, size_t size);
+void* yos_realloc(yos_exec_ctx_t* ctx, void* ptr, size_t size);
+
 // ============================================================================
 // Signal Hooks (minimal implementation for sandbox)
 // ============================================================================
