@@ -33,6 +33,10 @@ int32_t yos_wait4(yos_exec_ctx_t* ctx, int32_t pid, int* status, int options, st
 int yos_kill(yos_exec_ctx_t* ctx, int32_t pid, int sig);
 int yos_raise(yos_exec_ctx_t* ctx, int sig);
 
+// Fork child detection - called at _start to check if this is a forked child
+// Returns: 0 if this is a fork child (and clears the flag), -1 otherwise
+int32_t yos_get_fork_result(yos_exec_ctx_t* ctx);
+
 #ifdef __cplusplus
 }
 #endif
