@@ -6,7 +6,7 @@ YOS (Your OS Sandbox) emulates a multi-process POSIX environment for WebAssembly
 
 ## Goals
 
-1. **Fork Emulation** - `fork()` via memory snapshot + new thread
+1. **Fork Emulation** - `fork()` via memory snapshot + asyncify + new thread (see [docs/fork.md](fork.md))
 2. **Process Isolation** - Each process has own memory, VFS, cwd
 3. **POSIX Compatibility** - Support common syscalls
 4. **No Native fork()** - Works on iOS, WASM, etc.
@@ -407,7 +407,7 @@ clang --target=wasm32 -nostdlib -Wl,--allow-undefined \
 - BusyBox compilation to WASM
 
 ### TODO
-- [ ] Fork implementation (memory snapshot)
+- [x] Fork implementation - **DONE** (see [docs/fork.md](fork.md), POC in `poc/fork/`)
 - [ ] Exec implementation
 - [ ] Wait/waitpid synchronization
 - [ ] Callback trampolines (qsort, signal, etc.)
